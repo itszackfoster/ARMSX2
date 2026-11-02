@@ -923,6 +923,15 @@ private fun UsbDeviceSection(refreshToken: MutableState<Int>) {
             }
             // Aiming is the one thing a button bridge cannot provide, so the gun gets its own note.
             if (current == "guncon2") HelpText(str("pad.lightgun.help"))
+            // How many buzzers the second screen draws.
+            if (current == com.armsx2.BuzzPad.DEVICE_TYPE) {
+                SegmentedRow(
+                    label = str("pad.usb.buzzPlayers"),
+                    options = listOf("1", "2", "3", "4"),
+                    selectedIndex = com.armsx2.BuzzPad.playerCount() - 1,
+                    onChange = { com.armsx2.BuzzPad.setPlayerCount(it + 1); refreshToken.value++ },
+                )
+            }
         }
     }
 }

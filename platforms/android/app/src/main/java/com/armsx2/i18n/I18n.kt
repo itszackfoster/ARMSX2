@@ -1117,6 +1117,7 @@ private val BASE_EN: Map<String, String> = mapOf(
     "pad.usb.port" to "Port",
     "pad.usb.none" to "Not Connected",
     "pad.usb.subtype" to "Variant",
+    "pad.usb.buzzPlayers" to "Buzzers on second screen",
     "pad.usb.help" to "Attach an emulated USB device to a port: Buzz buzzers, a Rock Band drum kit, Keyboardmania, a DJ turntable, GunCon 2 and more. Your normal controls drive it, no extra mapping needed. Restart the game after changing a port: the game checks what is plugged in when it boots.",
     "pad.lightgun.section" to "Lightgun (GunCon 2)",
     "pad.lightgun.enable.label" to "Enable GunCon 2",

@@ -19,7 +19,8 @@ import kr.co.iefriends.pcsx2.NativeApp
 /**
  * Four Buzz! buzzers on the second screen (Ayn Thor bottom panel and similar).
  *
- * Layout: a 2x2 grid, one quadrant per player.
+ * Layout: one area per player, 1 to 4 of them (USB Devices settings). 1 to 3 sit side by side,
+ * 4 make a 2x2 grid.
  *  - By default each quadrant shows only the big red buzzer.
  *  - Pressing a player's buzzer loads that player's coloured buttons in (blue, orange, green,
  *    yellow, top to bottom, as on the real controller), with a small red buzzer kept above them.
@@ -46,6 +47,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         /** USB device type name the core registers the buzzers under (BuzzDevice::TypeName). */
         const val DEVICE_TYPE = "BuzzDevice"
 
+        /** Most buzzers the core's Buzz device has; arrays are sized for this. */
         const val PLAYERS = 4
         const val RED = 0
         const val BLUE = 1
@@ -62,6 +64,22 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
         fun bindId(player: Int, button: Int) = player * 5 + button
 
+        private const val PREF_PLAYERS = "buzz.players"
+
+        /** How many buzzers the panel shows, 1 to 4. Player 1 is always the first one shown. */
+        fun playerCount(): Int = runCatching {
+            com.armsx2.runtime.MainActivityRuntime.prefs.getInt(PREF_PLAYERS, PLAYERS)
+        }.getOrDefault(PLAYERS).coerceIn(1, PLAYERS)
+
+        fun setPlayerCount(count: Int) {
+            runCatching {
+                com.armsx2.runtime.MainActivityRuntime.prefs.edit()
+                    .putInt(PREF_PLAYERS, count.coerceIn(1, PLAYERS)).apply()
+            }
+            // The panel lays itself out once, so rebuild it to pick up the new count.
+            SecondScreen.rebuild()
+        }
+
         /** The USB port with the buzzers on it, or -1 if neither port has them. */
         fun buzzPort(): Int =
             (0..1).firstOrNull { UsbDevices.storedType(it) == DEVICE_TYPE } ?: -1
@@ -77,6 +95,9 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     }
 
     private val dp = resources.displayMetrics.density
+
+    /** Players on screen this time round; a change rebuilds the whole panel. */
+    private val players = playerCount()
     private val handler = Handler(Looper.getMainLooper())
 
     // ---- State ----------------------------------------------------------------------------------
@@ -133,17 +154,23 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         val gap = 6 * dp
-        val halfW = w / 2f
-        val halfH = h / 2f
-        quad[0].set(gap, gap, halfW - gap / 2, halfH - gap / 2)
-        quad[1].set(halfW + gap / 2, gap, w - gap, halfH - gap / 2)
-        quad[2].set(gap, halfH + gap / 2, halfW - gap / 2, h - gap)
-        quad[3].set(halfW + gap / 2, halfH + gap / 2, w - gap, h - gap)
+        // 1 to 3 players sit side by side in columns; 4 make a 2x2 grid.
+        val cols = if (players == 4) 2 else players
+        val rows = if (players == 4) 2 else 1
+        val cellW = (w - gap * (cols + 1)) / cols
+        val cellH = (h - gap * (rows + 1)) / rows
+        for (p in 0 until players) {
+            val c = p % cols
+            val r = p / cols
+            val left = gap + c * (cellW + gap)
+            val top = gap + r * (cellH + gap)
+            quad[p].set(left, top, left + cellW, top + cellH)
+        }
 
         val forceSize = 52 * dp
         forceRect.set(w - forceSize - gap, h - forceSize - gap, w - gap.toFloat(), h - gap.toFloat())
 
-        for (p in 0 until PLAYERS) {
+        for (p in 0 until players) {
             val q = quad[p]
             val inner = 8 * dp
             val top = q.top + 26 * dp // room for the player label
@@ -159,8 +186,8 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             for (i in 0 until 4) {
                 val t = barsTop + i * (barH + inner)
                 var right = q.right - inner
-                // Player 4's bottom bar would sit under the force toggle: stop it short.
-                if (p == 3 && i == 3) right = minOf(right, forceRect.left - inner)
+                // The bottom-right player's last bar would sit under the force toggle: stop it short.
+                if (p == players - 1 && i == 3) right = minOf(right, forceRect.left - inner)
                 colourRects[p][COLOUR_ORDER[i]].set(q.left + inner, t, right, t + barH)
             }
         }
@@ -181,7 +208,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        for (p in 0 until PLAYERS) drawPlayer(canvas, p)
+        for (p in 0 until players) drawPlayer(canvas, p)
         drawForceToggle(canvas)
     }
 
@@ -267,7 +294,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     /** Which bind a touch at (x, y) lands on, or -1. */
     private fun hitTest(x: Float, y: Float): Int {
-        for (p in 0 until PLAYERS) {
+        for (p in 0 until players) {
             if (!quad[p].contains(x, y)) continue
             if (shown(p) >= 0.5f) {
                 for (b in 0..4) {
