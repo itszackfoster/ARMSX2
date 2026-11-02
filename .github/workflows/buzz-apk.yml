@@ -1,0 +1,58 @@
+# Builds the Buzz! second-screen fork as a sideloadable APK.
+#
+# Runs on any push to the buzz-second-screen branch, or by hand from the Actions tab
+# ("Buzz APK" -> Run workflow). The APK installs as "ARMSX2 Buzz" (com.armsx2.buzz), so it sits
+# beside the official ARMSX2 rather than replacing it. Signed with the Android debug key, which is
+# fine for sideloading. Download it from the run's Artifacts section when it finishes.
+name: Buzz APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - buzz-second-screen
+
+jobs:
+  android:
+    name: Android APK (Buzz fork)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: platforms/android
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install NDK + CMake
+        run: yes | sdkmanager "ndk;29.0.14206865" "cmake;3.31.6" >/dev/null || true
+
+      - name: Fetch shaderc third-party deps
+        run: python3 app/src/main/cpp/3rdparty/shaderc/utils/git-sync-deps
+
+      - name: Install Rust Android target
+        run: rustup target add aarch64-linux-android
+
+      - name: Build APK
+        run: >
+          ./gradlew :app:assembleGithubRelease --stacktrace
+          -Parmsx2.applicationId=com.armsx2.buzz
+          "-Parmsx2.appLabel=ARMSX2 Buzz"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: armsx2-buzz-apk
+          path: platforms/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error

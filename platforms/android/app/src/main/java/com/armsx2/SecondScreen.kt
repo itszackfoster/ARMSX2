@@ -394,6 +394,8 @@ object SecondScreen {
         /** Rows that only make sense with a game running; hidden in the library. */
         private val gameRows = mutableListOf<View>()
         private var ticking = false
+        /** True when the panel is showing [BuzzPad]; the stats views were never built then. */
+        private var buzzMode = false
         private val tick = object : Runnable {
             override fun run() {
                 if (!ticking) return
@@ -412,6 +414,16 @@ object SecondScreen {
             setCancelable(false)
             setCanceledOnTouchOutside(false)
             dp = resources.displayMetrics.density
+
+            // Buzz! buzzers on a USB port: the bottom screen becomes the four buzzers instead of
+            // the stats grid. Picking another USB device rebuilds the panel back (UsbDevices).
+            val buzzPort = BuzzPad.buzzPort()
+            if (buzzPort >= 0) {
+                buzzMode = true
+                setContentView(BuzzPad(context, buzzPort))
+                return
+            }
+
             val pad = (dp * 14).toInt()
 
             // ★ Styled in code, not from a theme/XML. A Presentation gets the *system* dialog
@@ -1077,6 +1089,7 @@ object SecondScreen {
 
         override fun onStart() {
             super.onStart()
+            if (buzzMode) return
             ticking = true
             handler.post(tick)
         }

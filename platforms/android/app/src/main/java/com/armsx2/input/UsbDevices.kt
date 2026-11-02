@@ -98,6 +98,8 @@ object UsbDevices {
         // Keep the lightgun's own state honest: it owns aiming, and it must not believe a gun is
         // attached once this port holds a drum kit.
         Lightgun.syncFromPort(port, type)
+        // The second screen swaps to the Buzz! buzzers (or back) when this changes.
+        com.armsx2.SecondScreen.rebuild()
     }
 
     fun setSubtype(port: Int, subtype: Int) {
