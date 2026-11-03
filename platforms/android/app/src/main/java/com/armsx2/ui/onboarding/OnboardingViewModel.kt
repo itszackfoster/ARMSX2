@@ -393,7 +393,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /**
-     * Buzz Controller's whole setup: one folder that holds the BIOS and the games. Finds a BIOS in
+     * Buzz Launcher's whole setup: one folder that holds the BIOS and the games. Finds a BIOS in
      * it or up to three folders down, makes the folder (and its subfolders) the game library, and
      * finishes setup. Only files of a BIOS's size are probed, so game discs are never read.
      */
@@ -434,7 +434,7 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    /** Point the library at a different folder (Buzz Controller settings). */
+    /** Point the library at a different folder (Buzz Launcher settings). */
     fun changeGameFolder(treeUri: Uri) {
         val context = getApplication<Application>()
         runCatching {

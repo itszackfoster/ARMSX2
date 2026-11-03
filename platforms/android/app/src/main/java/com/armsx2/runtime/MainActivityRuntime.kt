@@ -2371,7 +2371,7 @@ open class MainActivityRuntime : ComponentActivity() {
             // Lightgun: read the pref and re-assert the USB device type. The ini is
             // authoritative, but this covers a first run that has no USB section yet.
             runCatching {
-                // Buzz Controller: the buzzers are always on port 1, before the core reads it.
+                // Buzz Launcher: the buzzers are always on port 1, before the core reads it.
                 com.armsx2.BuzzEdition.applyPrefs()
                 com.armsx2.input.UsbDevices.load()
                 com.armsx2.input.Lightgun.load()

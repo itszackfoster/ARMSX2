@@ -927,7 +927,7 @@ private fun UsbDeviceSection(refreshToken: MutableState<Int>) {
             if (current == com.armsx2.BuzzPad.DEVICE_TYPE) {
                 SegmentedRow(
                     label = str("pad.usb.buzzPlayers"),
-                    options = listOf("1", "2", "3", "4"),
+                    options = (1..com.armsx2.BuzzPad.PLAYERS).map { it.toString() },
                     selectedIndex = com.armsx2.BuzzPad.playerCount() - 1,
                     onChange = { com.armsx2.BuzzPad.setPlayerCount(it + 1); refreshToken.value++ },
                 )

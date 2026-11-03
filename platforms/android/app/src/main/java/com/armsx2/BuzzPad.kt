@@ -56,8 +56,11 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         /** USB device type name the core registers the buzzers under (BuzzDevice::TypeName). */
         const val DEVICE_TYPE = "BuzzDevice"
 
-        /** Most buzzers the core's Buzz device has; arrays are sized for this. */
-        const val PLAYERS = 4
+        /** Buzzers in one set: one emulated Buzz device. */
+        const val PER_SET = 4
+
+        /** Most players: two sets, on USB ports 1 and 2. Arrays are sized for this. */
+        const val PLAYERS = 8
         const val RED = 0
         const val BLUE = 1
         const val ORANGE = 2
@@ -71,20 +74,35 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
         private const val REVEAL_MS = 180L
 
+        /** Panel-wide id for one button: player 0..7, button 0..4. */
         fun bindId(player: Int, button: Int) = player * 5 + button
+
+        /** Press or release [button] for [slot] (0..7) in the game. Players 1-4 are the set on
+         *  USB port 1, players 5-8 the set on port 2. */
+        fun pressSlot(slot: Int, button: Int, down: Boolean) {
+            if (slot !in 0 until PLAYERS || button !in 0..4) return
+            val port = slot / PER_SET
+            if (UsbDevices.storedType(port) != DEVICE_TYPE) return
+            BuzzInput.set(port, (slot % PER_SET) * 5 + button, down)
+        }
 
         private const val PREF_PLAYERS = "buzz.players"
 
-        /** How many buzzers the panel shows, 1 to 4, before phones take any. */
+        /** How many players are in the game, 1 to 8, on the Thor's screen and on phones. */
         fun playerCount(): Int = runCatching {
             com.armsx2.runtime.MainActivityRuntime.prefs.getInt(PREF_PLAYERS, PLAYERS)
         }.getOrDefault(PLAYERS).coerceIn(1, PLAYERS)
 
         fun setPlayerCount(count: Int) {
+            val n = count.coerceIn(1, PLAYERS)
             runCatching {
-                com.armsx2.runtime.MainActivityRuntime.prefs.edit()
-                    .putInt(PREF_PLAYERS, count.coerceIn(1, PLAYERS)).apply()
+                com.armsx2.runtime.MainActivityRuntime.prefs.edit().putInt(PREF_PLAYERS, n).apply()
             }
+            // Players 5-8 need the second set of buzzers; plug it in only when they are used, so a
+            // game for up to four never sees a set it was not expecting. USB devices are checked
+            // when a game boots, which is why this is chosen in the lobby.
+            val second = if (n > PER_SET) DEVICE_TYPE else UsbDevices.NONE
+            if (UsbDevices.storedType(1) != second) runCatching { UsbDevices.setType(1, second) }
             SecondScreen.rebuild()
         }
 
@@ -280,8 +298,8 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         // Lobby: a row of player-count buttons, then the phone QR below it.
         val pad = 28 * dp
         val countTop = pad + 34 * dp
-        val countGap = 10 * dp
-        val countW = (w - pad * 2 - countGap * 3) / 4f
+        val countGap = 8 * dp
+        val countW = (w - pad * 2 - countGap * (PLAYERS - 1)) / PLAYERS
         for (i in 0 until PLAYERS) {
             val left = pad + i * (countW + countGap)
             countRects[i].set(left, countTop, left + countW, countTop + 64 * dp)
@@ -290,11 +308,16 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         val qrSize = minOf(190 * dp, h - qrTop - pad)
         lobbyQrRect.set(pad, qrTop, pad + qrSize, qrTop + qrSize)
 
-        // Player cells above it. 1 to 3 in columns; 4 in a 2x2 grid.
+        // Player cells above it: 1 to 3 in one row; 4 as 2x2; 5-6 as 3x2; 7-8 as 4x2.
         val n = visible.size
         if (n == 0) return
-        val cols = if (n == 4) 2 else n
-        val rows = if (n == 4) 2 else 1
+        val cols = when {
+            n <= 3 -> n
+            n == 4 -> 2
+            n <= 6 -> 3
+            else -> 4
+        }
+        val rows = if (n <= 3) 1 else 2
         val cellW = (w - gap * (cols + 1)) / cols
         val cellH = (barTop - gap * (rows + 1)) / rows
         for ((i, slot) in visible.withIndex()) {
@@ -689,10 +712,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         invalidate()
     }
 
-    private fun send(bind: Int, pressed: Boolean) {
-        if (usbPort !in 0..1) return
-        BuzzInput.set(usbPort, bind, pressed)
-    }
+    private fun send(bind: Int, pressed: Boolean) = pressSlot(bind / 5, bind % 5, pressed)
 
     // ---- Reveal / force ----------------------------------------------------------------------------
 

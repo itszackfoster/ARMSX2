@@ -63,7 +63,7 @@ function connect(){
  ws=new WebSocket('ws://'+location.host+'/ws');
  ws.onmessage=function(e){var m=JSON.parse(e.data);
   if(m.t==='slot'){full=false;status('PLAYER '+m.p);show('')}
-  else if(m.t==='full'){full=true;status('Game full','All four players are taken');show('All four buzzers are in use. Reload when someone leaves.')}
+  else if(m.t==='full'){full=true;status('Game full','Every player is taken');show('Every buzzer is in use. Reload when someone leaves, or add players on the Thor.')}
   };
  ws.onclose=function(){releaseAll();if(full)return;status('Reconnecting','Check you are on the same Wi-Fi as the Thor');show('Lost connection to the Thor. Trying again...');setTimeout(connect,1500)};
 }

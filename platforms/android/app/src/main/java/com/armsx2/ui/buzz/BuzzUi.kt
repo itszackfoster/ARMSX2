@@ -24,7 +24,7 @@ import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** The Buzz Controller look: a dark ground, one yellow action colour, and the buzzer red. */
+/** The Buzz Launcher look: a dark ground, one yellow action colour, and the buzzer red. */
 internal object BuzzColors {
     val Ground = Color(0xFF0B0D12)
     val Surface = Color(0xFF161A22)
@@ -47,7 +47,7 @@ internal fun BuzzWordmark(size: TextUnit, dot: Dp) {
         ) {
             Box(Modifier.size(dot * 0.82f).clip(CircleShape).background(BuzzColors.Red))
         }
-        Text("Buzz Controller", color = BuzzColors.Text, fontSize = size, fontWeight = FontWeight.Black)
+        Text("Buzz Launcher", color = BuzzColors.Text, fontSize = size, fontWeight = FontWeight.Black)
     }
 }
 

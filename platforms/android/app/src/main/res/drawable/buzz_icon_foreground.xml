@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Buzz Launcher icon: a red domed buzzer in a grey ring, with the four answer colours beneath.
+     Everything sits inside the 66dp adaptive-icon safe circle. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- housing ring, centre (54,44) r24 -->
+    <path android:fillColor="#2A2F3A"
+        android:pathData="M54,20a24,24 0,1 1,0 48a24,24 0,1 1,0 -48z" />
+    <!-- dome shadow, centre (54,45) r19 -->
+    <path android:fillColor="#9D1615"
+        android:pathData="M54,26a19,19 0,1 1,0 38a19,19 0,1 1,0 -38z" />
+    <!-- dome, centre (54,43) r19 -->
+    <path android:fillColor="#E0201E"
+        android:pathData="M54,24a19,19 0,1 1,0 38a19,19 0,1 1,0 -38z" />
+    <!-- highlight -->
+    <path android:fillColor="#55FFFFFF"
+        android:pathData="M47,30a7,5 0,1 1,0 10a7,5 0,1 1,0 -10z" />
+    <!-- answer colours: four 8x6 pills, 2 apart -->
+    <path android:fillColor="#1F6FDB" android:pathData="M38,74h2a3,3 0,0 1,0 6h-2a3,3 0,0 1,0 -6z" />
+    <path android:fillColor="#F2871C" android:pathData="M48,74h2a3,3 0,0 1,0 6h-2a3,3 0,0 1,0 -6z" />
+    <path android:fillColor="#2EAF4B" android:pathData="M58,74h2a3,3 0,0 1,0 6h-2a3,3 0,0 1,0 -6z" />
+    <path android:fillColor="#F4D21F" android:pathData="M68,74h2a3,3 0,0 1,0 6h-2a3,3 0,0 1,0 -6z" />
+</vector>

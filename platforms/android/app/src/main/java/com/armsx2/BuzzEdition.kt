@@ -5,7 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import com.armsx2.runtime.MainActivityRuntime
 
 /**
- * Buzz Controller: this build of ARMSX2 is a single-purpose app for the Buzz! quiz games.
+ * Buzz Launcher: this build of ARMSX2 is a single-purpose app for the Buzz! quiz games.
  *
  * Everything a player would otherwise configure is set here instead: the Buzz device on USB
  * port 1, the bottom-screen buzzer panel, and phone buzzers. The screens that replace ARMSX2's
@@ -33,6 +33,11 @@ object BuzzEdition {
                 .putString("usb.port0.type", BuzzPad.DEVICE_TYPE)
                 .putInt("usb.port0.subtype", 0)
                 .apply()
+        }
+        // The second set of buzzers, on port 2, only while the game is set up for 5-8 players.
+        val second = if (BuzzPad.playerCount() > BuzzPad.PER_SET) BuzzPad.DEVICE_TYPE else "None"
+        if ((prefs.getString("usb.port1.type", "None") ?: "None") != second) {
+            prefs.edit().putString("usb.port1.type", second).putInt("usb.port1.subtype", 0).apply()
         }
     }
 

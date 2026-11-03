@@ -28,17 +28,18 @@ object BuzzInput {
 
     /** Per bind id: the earliest time (ms) the next change may be applied. Scheduler thread only
      *  reads it via [set], which runs under this lock. */
-    private val nextAllowed = LongArray(BuzzPad.PLAYERS * 5)
+    private val nextAllowed = LongArray(2 * BuzzPad.PER_SET * 5) // both ports
     private val lock = Any()
 
     /** Press or release [bind] (player * 5 + button) on the Buzz device on [port]. */
     fun set(port: Int, bind: Int, down: Boolean) {
-        if (port !in 0..1 || bind !in nextAllowed.indices) return
+        val key = port * BuzzPad.PER_SET * 5 + bind
+        if (port !in 0..1 || bind !in 0 until BuzzPad.PER_SET * 5) return
         val now = System.nanoTime() / 1_000_000
         val delay: Long
         synchronized(lock) {
-            val at = maxOf(now, nextAllowed[bind])
-            nextAllowed[bind] = at + MIN_STATE_MS
+            val at = maxOf(now, nextAllowed[key])
+            nextAllowed[key] = at + MIN_STATE_MS
             delay = at - now
         }
         val apply = Runnable { runCatching { NativeApp.usbLightgunButton(port, bind, down) } }

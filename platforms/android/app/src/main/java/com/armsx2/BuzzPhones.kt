@@ -25,9 +25,8 @@ import kotlin.concurrent.thread
  * bottom-screen buzzers do, through NativeApp.usbLightgunButton. When a phone disconnects, any
  * button it was holding is released and its slot goes back to the Thor's screen.
  *
- * Slot rule (see [claimSlot]): a phone first takes a player nobody is using; if the screen is
- * already showing every free player, it takes the highest-numbered screen player, and the screen
- * drops that one. [screenSlots] is the other half of the same rule.
+ * Slot rule (see [claimSlot]): a phone takes the highest-numbered player in the game that no
+ * phone has yet, and the screen drops that player. [screenSlots] is the other half of the rule.
  *
  * Plain java.net with a minimal hand-written WebSocket: the messages are a few bytes each, from a
  * handful of phones, and pulling in a server library for that would cost more than it saves.
@@ -64,18 +63,18 @@ object BuzzPhones {
         slotOwner.indices.filter { slotOwner[it] != null }.toSet()
     }
 
-    /** Players the Thor's bottom screen should show: the first [count] slots no phone has. */
+    /** Players the Thor's bottom screen should show: of the [count] players in the game, the
+     *  ones no phone has. */
     fun screenSlots(count: Int): IntArray {
         val phones = phoneSlots()
-        return (0 until BuzzPad.PLAYERS).filter { it !in phones }.take(count).toIntArray()
+        return (0 until count.coerceAtMost(BuzzPad.PLAYERS)).filter { it !in phones }.toIntArray()
     }
 
+    /** A phone takes the highest-numbered player in the game that no phone has yet, so the Thor
+     *  keeps Player 1. Every player already on a phone: the game is full. */
     private fun claimSlot(c: Client): Int = synchronized(lock) {
-        val phones = slotOwner.indices.filter { slotOwner[it] != null }.toSet()
-        val screen = (0 until BuzzPad.PLAYERS).filter { it !in phones }.take(BuzzPad.playerCount())
-        val slot = (0 until BuzzPad.PLAYERS).firstOrNull { it !in phones && it !in screen }
-            ?: screen.lastOrNull()
-            ?: return -1
+        val count = BuzzPad.playerCount()
+        val slot = (count - 1 downTo 0).firstOrNull { slotOwner[it] == null } ?: return -1
         slotOwner[slot] = c
         c.slot = slot
         slot
@@ -261,11 +260,7 @@ object BuzzPhones {
         }
     }
 
-    private fun press(slot: Int, button: Int, down: Boolean) {
-        val port = BuzzPad.buzzPort()
-        if (port < 0) return
-        BuzzInput.set(port, BuzzPad.bindId(slot, button), down)
-    }
+    private fun press(slot: Int, button: Int, down: Boolean) = BuzzPad.pressSlot(slot, button, down)
 
     private fun disconnect(c: Client) {
         // Never leave a buzzer stuck down in the game because a phone locked or walked away.

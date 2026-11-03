@@ -19,9 +19,14 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.layout.BoxScope
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -101,16 +106,7 @@ fun BuzzHome(viewModel: HomeViewModel = viewModel()) {
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
-                games.isNotEmpty() -> LazyVerticalGrid(
-                    columns = GridCells.Fixed(4),
-                    horizontalArrangement = Arrangement.spacedBy(20.dp),
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
-                    modifier = Modifier.fillMaxSize(),
-                ) {
-                    items(games, key = { it.uri.toString() }) { game ->
-                        GameTile(game, CustomCovers.matchIn(customCovers, game)) { viewModel.launch(game) }
-                    }
-                }
+                games.isNotEmpty() -> GameShelf(games, customCovers) { viewModel.launch(it) }
                 state.scanning || !state.initialized -> CenterMessage {
                     CircularProgressIndicator(color = BuzzColors.Yellow, modifier = Modifier.size(44.dp))
                     Text("Looking for your Buzz! games…", color = BuzzColors.Text, fontSize = 18.sp)
@@ -140,6 +136,100 @@ fun BuzzHome(viewModel: HomeViewModel = viewModel()) {
     }
 }
 
+/**
+ * One row of game tiles that scrolls sideways, four to a screen. When there are more than fit, the
+ * edges fade with a small arrow on the side there is more, and a slim track under the row shows
+ * where in the list you are. Neither shows when every game fits.
+ */
+@Composable
+private fun GameShelf(
+    games: List<GameInfo>,
+    customCovers: Map<String, java.io.File>,
+    onPlay: (GameInfo) -> Unit,
+) {
+    val listState = rememberLazyListState()
+    val gap = 20.dp
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        val trackSpace = 18.dp
+        val tileWidth = (maxWidth - gap * 3) / 4
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                LazyRow(
+                    state = listState,
+                    horizontalArrangement = Arrangement.spacedBy(gap),
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    items(games, key = { it.uri.toString() }) { game ->
+                        GameTile(
+                            game,
+                            CustomCovers.matchIn(customCovers, game),
+                            Modifier.width(tileWidth).fillMaxHeight(),
+                        ) { onPlay(game) }
+                    }
+                }
+                val back = listState.canScrollBackward
+                val forward = listState.canScrollForward
+                if (back) EdgeHint(Alignment.CenterStart, pointsRight = false)
+                if (forward) EdgeHint(Alignment.CenterEnd, pointsRight = true)
+            }
+            if (listState.canScrollBackward || listState.canScrollForward) {
+                Spacer(Modifier.height(trackSpace - 4.dp))
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    ScrollTrack(listState, games.size)
+                }
+            }
+        }
+    }
+}
+
+/** A soft fade over the row's edge with a small arrow, saying "more this way". */
+@Composable
+private fun BoxScope.EdgeHint(alignment: Alignment, pointsRight: Boolean) {
+    val fade = if (pointsRight) listOf(Color.Transparent, BuzzColors.Ground) else listOf(BuzzColors.Ground, Color.Transparent)
+    Box(
+        Modifier
+            .align(alignment)
+            .fillMaxHeight()
+            .width(56.dp)
+            .background(Brush.horizontalGradient(fade)),
+        contentAlignment = if (pointsRight) Alignment.CenterEnd else Alignment.CenterStart,
+    ) {
+        Box(
+            Modifier.size(32.dp).clip(CircleShape).background(Color(0xCC161A22)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(if (pointsRight) "›" else "‹", color = BuzzColors.Dim, fontSize = 22.sp)
+        }
+    }
+}
+
+/** A slim track with a thumb showing which part of the list is on screen. */
+@Composable
+private fun ScrollTrack(listState: androidx.compose.foundation.lazy.LazyListState, total: Int) {
+    val info = listState.layoutInfo
+    val visibleCount = info.visibleItemsInfo.size.coerceAtLeast(1)
+    val first = listState.firstVisibleItemIndex
+    val thumbFraction = (visibleCount.toFloat() / total).coerceIn(0.1f, 1f)
+    val maxStart = (total - visibleCount).coerceAtLeast(1)
+    val startFraction = (first.toFloat() / maxStart).coerceIn(0f, 1f) * (1f - thumbFraction)
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth(0.3f)
+            .height(4.dp)
+            .clip(RoundedCornerShape(50))
+            .background(BuzzColors.Hairline),
+    ) {
+        Box(
+            Modifier
+                .padding(start = maxWidth * startFraction)
+                .width(maxWidth * thumbFraction)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(50))
+                .background(BuzzColors.Dim),
+        )
+    }
+}
+
 @Composable
 private fun CenterMessage(content: @Composable () -> Unit) {
     Column(
@@ -150,10 +240,10 @@ private fun CenterMessage(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun GameTile(game: GameInfo, customCover: java.io.File?, onClick: () -> Unit) {
+private fun GameTile(game: GameInfo, customCover: java.io.File?, modifier: Modifier, onClick: () -> Unit) {
     val title = game.displayTitle(false)
     Column(
-        Modifier
+        modifier
             .clip(RoundedCornerShape(18.dp))
             .background(BuzzColors.Surface)
             .clickable(role = Role.Button, onClick = onClick)
@@ -162,7 +252,7 @@ private fun GameTile(game: GameInfo, customCover: java.io.File?, onClick: () -> 
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Box(
-            Modifier.fillMaxWidth().aspectRatio(0.72f).clip(RoundedCornerShape(10.dp)).background(BuzzColors.Ring),
+            Modifier.fillMaxWidth().weight(1f).clip(RoundedCornerShape(10.dp)).background(BuzzColors.Ring),
             contentAlignment = Alignment.Center,
         ) {
             val model: Any? = customCover ?: game.coverUrl
