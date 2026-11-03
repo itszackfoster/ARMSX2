@@ -59,8 +59,11 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         /** Buzzers in one set: one emulated Buzz device. */
         const val PER_SET = 4
 
-        /** Most players: two sets, on USB ports 1 and 2. Arrays are sized for this. */
+        /** Most players in a game: two sets, on USB ports 1 and 2. Arrays are sized for this. */
         const val PLAYERS = 8
+
+        /** Most players on the Thor's own screen. Players past this join on phones. */
+        const val SCREEN_MAX = 4
         const val RED = 0
         const val BLUE = 1
         const val ORANGE = 2
@@ -308,16 +311,11 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         val qrSize = minOf(190 * dp, h - qrTop - pad)
         lobbyQrRect.set(pad, qrTop, pad + qrSize, qrTop + qrSize)
 
-        // Player cells above it: 1 to 3 in one row; 4 as 2x2; 5-6 as 3x2; 7-8 as 4x2.
+        // Player cells above it (at most SCREEN_MAX): 1 to 3 in one row, 4 as 2x2.
         val n = visible.size
         if (n == 0) return
-        val cols = when {
-            n <= 3 -> n
-            n == 4 -> 2
-            n <= 6 -> 3
-            else -> 4
-        }
-        val rows = if (n <= 3) 1 else 2
+        val cols = if (n == 4) 2 else n
+        val rows = if (n == 4) 2 else 1
         val cellW = (w - gap * (cols + 1)) / cols
         val cellH = (barTop - gap * (rows + 1)) / rows
         for ((i, slot) in visible.withIndex()) {
@@ -464,7 +462,10 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         var y = q.top + 20 * dp
         canvas.drawText("Or play on your phone", textLeft, y, header(20f, Paint.Align.LEFT))
         y += 14 * dp
-        val blurb = if (qrUrl != null)
+        val count = playerCount()
+        val blurb = if (qrUrl != null && count > SCREEN_MAX)
+            "Players ${SCREEN_MAX + 1} to $count play on phones. Scan with your camera; phones need to be on the same Wi-Fi as the Thor."
+        else if (qrUrl != null)
             "Scan with your camera. Phones need to be on the same Wi-Fi as the Thor."
         else
             "Connect the Thor to Wi-Fi, or turn on its hotspot, and a code to scan appears here."

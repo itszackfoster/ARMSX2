@@ -25,8 +25,9 @@ import kotlin.concurrent.thread
  * bottom-screen buzzers do, through NativeApp.usbLightgunButton. When a phone disconnects, any
  * button it was holding is released and its slot goes back to the Thor's screen.
  *
- * Slot rule (see [claimSlot]): a phone takes the highest-numbered player in the game that no
- * phone has yet, and the screen drops that player. [screenSlots] is the other half of the rule.
+ * Slot rule (see [claimSlot]): the Thor's screen holds up to four players; phones fill the rest
+ * of the game first (players 5-8), then take the screen's highest player. [screenSlots] is the
+ * other half of the rule.
  *
  * Plain java.net with a minimal hand-written WebSocket: the messages are a few bytes each, from a
  * handful of phones, and pulling in a server library for that would cost more than it saves.
@@ -63,18 +64,24 @@ object BuzzPhones {
         slotOwner.indices.filter { slotOwner[it] != null }.toSet()
     }
 
-    /** Players the Thor's bottom screen should show: of the [count] players in the game, the
-     *  ones no phone has. */
+    /** Players the Thor's bottom screen should show: the first players in the game that no phone
+     *  has, at most [BuzzPad.SCREEN_MAX] of them. Anyone past that plays on a phone. */
     fun screenSlots(count: Int): IntArray {
         val phones = phoneSlots()
-        return (0 until count.coerceAtMost(BuzzPad.PLAYERS)).filter { it !in phones }.toIntArray()
+        return (0 until count.coerceAtMost(BuzzPad.PLAYERS)).filter { it !in phones }
+            .take(BuzzPad.SCREEN_MAX).toIntArray()
     }
 
-    /** A phone takes the highest-numbered player in the game that no phone has yet, so the Thor
-     *  keeps Player 1. Every player already on a phone: the game is full. */
+    /** A phone takes the first player in the game that is neither on a phone nor on the Thor's
+     *  screen (players 5-8); failing that, the highest-numbered player on the screen, which the
+     *  screen then drops. Every player already on a phone: the game is full. */
     private fun claimSlot(c: Client): Int = synchronized(lock) {
-        val count = BuzzPad.playerCount()
-        val slot = (count - 1 downTo 0).firstOrNull { slotOwner[it] == null } ?: return -1
+        val count = BuzzPad.playerCount().coerceAtMost(BuzzPad.PLAYERS)
+        val phones = (0 until BuzzPad.PLAYERS).filter { slotOwner[it] != null }.toSet()
+        val screen = (0 until count).filter { it !in phones }.take(BuzzPad.SCREEN_MAX)
+        val slot = (0 until count).firstOrNull { it !in phones && it !in screen }
+            ?: screen.lastOrNull()
+            ?: return -1
         slotOwner[slot] = c
         c.slot = slot
         slot
