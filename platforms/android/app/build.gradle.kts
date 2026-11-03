@@ -404,6 +404,8 @@ val checkNoWindowModals by tasks.registering {
 tasks.named("preBuild") { dependsOn(checkNoWindowModals) }
 
 dependencies {
+    // QR code for phones joining as Buzz! buzzers (BuzzPad). Pure Java, no Play Services.
+    implementation("com.google.zxing:core:3.5.3")
     // Discord Social SDK. Its .aar's manifest declares RECORD_AUDIO plus foreground-service and
     // audio-settings permissions for its voice features, and the manifest merger folds them into
     // ARMSX2. RECORD_AUDIO is ours as well now (the emulated PS2 microphone reads the device's

@@ -100,6 +100,8 @@ object UsbDevices {
         Lightgun.syncFromPort(port, type)
         // The second screen swaps to the Buzz! buzzers (or back) when this changes.
         com.armsx2.SecondScreen.rebuild()
+        // No buzzers on either port any more: stop letting phones join.
+        if (com.armsx2.BuzzPad.buzzPort() < 0) com.armsx2.BuzzPhones.stop()
     }
 
     fun setSubtype(port: Int, subtype: Int) {
