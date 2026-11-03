@@ -62,6 +62,10 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.armsx2.BuzzDisplay
+import com.armsx2.BuzzPad
+import com.armsx2.BuzzPhones
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.asImageBitmap
 import com.armsx2.BuzzEdition
 import androidx.compose.foundation.verticalScroll
 import com.armsx2.CustomCovers
@@ -102,44 +106,170 @@ fun BuzzHome(viewModel: HomeViewModel = viewModel()) {
     val coverVersion = CustomCovers.version.value
     val customCovers = remember(coverVersion) { CustomCovers.loadAll(context) }
 
-    Column(
-        Modifier.fillMaxSize().background(BuzzColors.Ground).padding(horizontal = 40.dp, vertical = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(22.dp),
-    ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            BuzzWordmark(size = 26.sp, dot = 36.dp)
-            Spacer(Modifier.weight(1f))
-            GearButton { showSettings = true }
+    // Continue: the Buzz! game with the newest autosave, looked up again whenever a game ends.
+    val emuState = MainActivityRuntime.eState.value
+    var resume by remember { mutableStateOf<Pair<GameInfo, Long>?>(null) }
+    LaunchedEffect(games, emuState) {
+        if (emuState != com.armsx2.EmuState.STOPPED) return@LaunchedEffect
+        resume = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            runCatching {
+                val bySerial = games.filter { it.serial != null }.associateBy { it.serial!!.uppercase() }
+                com.armsx2.ui.saves.SaveCatalog.scan(context)
+                    .filter { !it.isBackup && it.id.kind == com.armsx2.ui.saves.SaveKind.Autosave }
+                    .sortedByDescending { it.modified }
+                    .firstNotNullOfOrNull { e -> bySerial[e.serial]?.let { it to e.modified } }
+            }.getOrNull()
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                games.isNotEmpty() -> GameShelf(games, customCovers) { viewModel.launch(it) }
-                state.scanning || !state.initialized -> CenterMessage {
-                    CircularProgressIndicator(color = BuzzColors.Yellow, modifier = Modifier.size(44.dp))
-                    Text("Looking for your Buzz! games…", color = BuzzColors.Text, fontSize = 18.sp)
-                }
-                else -> CenterMessage {
-                    Text("No Buzz! games found", color = BuzzColors.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-                    Text(
-                        "Put your Buzz! game files in your games folder, or choose a different folder in Settings.",
-                        color = BuzzColors.Dim,
-                        fontSize = 16.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.widthIn(max = 520.dp),
-                    )
-                    BuzzSecondaryButton("Open settings", navId = "buzz.opensettings") { showSettings = true }
+    }
+
+    // Controller shortcuts on this screen (MainActivityRuntime routes Start, Select and Y here).
+    val activity = context as? android.app.Activity
+    DisposableEffect(Unit) {
+        BuzzNav.openSettings = { showSettings = true }
+        BuzzNav.quit = { quitApp(activity) }
+        onDispose {
+            BuzzNav.openSettings = null
+            BuzzNav.quit = null
+            BuzzNav.showJoin.value = false
+        }
+    }
+
+    val phoneVersion = BuzzPhones.version.intValue
+    val players = BuzzEdition.players.intValue
+    val onPhones = remember(phoneVersion) { BuzzPhones.phoneSeats().size }
+    val pad = com.armsx2.ui.common.PadInput.active.value
+
+    Box(Modifier.fillMaxSize().background(BuzzColors.Ground)) {
+        Column(
+            Modifier.fillMaxSize().padding(start = 40.dp, end = 40.dp, top = 28.dp, bottom = if (pad) 0.dp else 24.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
+        ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                BuzzWordmark(size = 26.sp, dot = 36.dp)
+                Spacer(Modifier.weight(1f))
+                PlayersChip(players, onPhones)
+                RoundIconButton("⚙", "Settings", "buzz.gear") { showSettings = true }
+                RoundIconButton("⏻", "Close Buzz Launcher", "buzz.quit") { quitApp(activity) }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    games.isNotEmpty() -> GameShelf(
+                        games,
+                        customCovers,
+                        resume,
+                        onContinue = { game ->
+                            val ok = MainActivityRuntime.launchGameFromAutosave(game, 1) { loaded ->
+                                if (!loaded) android.widget.Toast.makeText(
+                                    context, "Couldn't load the save, so the game started fresh.", android.widget.Toast.LENGTH_LONG,
+                                ).show()
+                            }
+                            if (!ok) viewModel.launch(game)
+                        },
+                    ) { viewModel.launch(it) }
+                    state.scanning || !state.initialized -> CenterMessage {
+                        CircularProgressIndicator(color = BuzzColors.Yellow, modifier = Modifier.size(44.dp))
+                        Text("Looking for your Buzz! games…", color = BuzzColors.Text, fontSize = 18.sp)
+                    }
+                    else -> CenterMessage {
+                        Text("No Buzz! games found", color = BuzzColors.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Put your Buzz! game files in your games folder, or choose a different folder in Settings.",
+                            color = BuzzColors.Dim,
+                            fontSize = 16.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.widthIn(max = 520.dp),
+                        )
+                        BuzzSecondaryButton("Open settings", navId = "buzz.opensettings") { showSettings = true }
+                    }
                 }
             }
+            if (pad) HintsBar() else if (games.isNotEmpty()) {
+                Text(
+                    "Tap a game to play",
+                    color = BuzzColors.Dim,
+                    fontSize = 15.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
         }
-        if (games.isNotEmpty()) {
-            val players = BuzzEdition.players.intValue
-            Text(
-                "Tap or press A to play  ·  $players ${if (players == 1) "player" else "players"} (L1 / R1 to change)",
-                color = BuzzColors.Dim,
-                fontSize = 15.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth(),
-            )
+        if (BuzzNav.showJoin.value) JoinCodeOverlay { BuzzNav.showJoin.value = false }
+    }
+}
+
+/** Close the app: phones are told nothing more is coming, and the task leaves recents. */
+private fun quitApp(activity: android.app.Activity?) {
+    BuzzPhones.stop()
+    activity?.finishAndRemoveTask()
+}
+
+@Composable
+private fun PlayersChip(players: Int, onPhones: Int) {
+    Row(
+        Modifier.height(40.dp).clip(RoundedCornerShape(50)).background(BuzzColors.Surface).padding(horizontal = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(Color(0xFF2EAF4B)))
+        val text = buildString {
+            append(if (players == 1) "1 player" else "$players players")
+            if (onPhones > 0) append(" · $onPhones on ${if (onPhones == 1) "a phone" else "phones"}")
+        }
+        Text(text, color = BuzzColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+    }
+}
+
+/** Shown along the bottom while a controller is in use. */
+@Composable
+private fun HintsBar() {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+        horizontalArrangement = Arrangement.spacedBy(26.dp, Alignment.End),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Hint(listOf("A"), "Play")
+        Hint(listOf("L1", "R1"), "Players")
+        if (BuzzEdition.phonesEnabled.value) Hint(listOf("Y"), "Join code")
+        Hint(listOf("Start"), "Settings")
+        Hint(listOf("Select"), "Close")
+    }
+}
+
+@Composable
+private fun Hint(keys: List<String>, text: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        keys.forEach { KeyCap(it) }
+        Text(text, color = BuzzColors.Dim, fontSize = 14.sp, modifier = Modifier.padding(start = 2.dp))
+    }
+}
+
+/** The phone join code, large on the top screen, for when the top screen is on a TV. */
+@Composable
+private fun JoinCodeOverlay(onClose: () -> Unit) {
+    BackHandler(onBack = onClose)
+    val url = remember { BuzzPhones.url() }
+    val qr = remember(url) { url?.let { BuzzPad.makeQrBitmap(it, 512)?.asImageBitmap() } }
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color(0xF20B0D12))
+            .clickable(role = Role.Button, onClick = onClose),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            if (qr != null) {
+                Box(Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White).padding(14.dp)) {
+                    Image(qr, contentDescription = "Join code", modifier = Modifier.size(260.dp))
+                }
+                Text("Scan to join as a buzzer", color = BuzzColors.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("$url  ·  same Wi-Fi as the Thor", color = BuzzColors.Dim, fontSize = 16.sp)
+            } else {
+                Text("No Wi-Fi connection", color = BuzzColors.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                Text("Connect the Thor to Wi-Fi, or turn on its hotspot.", color = BuzzColors.Dim, fontSize = 16.sp)
+            }
+            Text("Press B or tap to close", color = BuzzColors.Dim, fontSize = 14.sp)
         }
     }
 }
@@ -157,12 +287,16 @@ fun BuzzHome(viewModel: HomeViewModel = viewModel()) {
 private fun GameShelf(
     games: List<GameInfo>,
     customCovers: Map<String, java.io.File>,
+    resume: Pair<GameInfo, Long>?,
+    onContinue: (GameInfo) -> Unit,
     onPlay: (GameInfo) -> Unit,
 ) {
     val scroll = rememberScrollState()
     val gap = 20.dp
-    // Start on the first game, so A plays it straight away on a controller.
-    LaunchedEffect(Unit) { SettingsControllerNav.focusWhenRegistered(null, "buzz.game.0") }
+    // Start on Continue, or the first game, so A gets going straight away on a controller.
+    LaunchedEffect(resume != null) {
+        SettingsControllerNav.focusWhenRegistered(null, if (resume != null) "buzz.continue" else "buzz.game.0")
+    }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val tileWidth = (maxWidth - gap * 3) / 4
         val viewport = maxWidth
@@ -172,6 +306,14 @@ private fun GameShelf(
                     Modifier.fillMaxSize().horizontalScroll(scroll),
                     horizontalArrangement = Arrangement.spacedBy(gap),
                 ) {
+                    resume?.let { (game, savedAt) ->
+                        ContinueTile(
+                            game,
+                            CustomCovers.matchIn(customCovers, game),
+                            savedAt,
+                            Modifier.width(tileWidth * 2 + gap).fillMaxHeight(),
+                        ) { onContinue(game) }
+                    }
                     games.forEachIndexed { index, game ->
                         GameTile(
                             game,
@@ -299,18 +441,63 @@ private fun GameTile(
 }
 
 @Composable
-private fun GearButton(onClick: () -> Unit) {
+private fun RoundIconButton(icon: String, description: String, navId: String, onClick: () -> Unit) {
     Box(
         Modifier
-            .controllerFocusable("buzz.gear", RoundedCornerShape(50), onConfirm = onClick)
+            .controllerFocusable(navId, RoundedCornerShape(50), onConfirm = onClick)
             .size(48.dp)
             .clip(CircleShape)
             .background(BuzzColors.Surface)
             .clickable(role = Role.Button, onClick = onClick)
-            .semantics { contentDescription = "Settings" },
+            .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        Text("⚙", color = BuzzColors.Dim, fontSize = 24.sp)
+        Text(icon, color = BuzzColors.Dim, fontSize = 22.sp)
+    }
+}
+
+/** The last game played, picking up from its newest autosave. Twice a tile's width. */
+@Composable
+private fun ContinueTile(
+    game: GameInfo,
+    customCover: java.io.File?,
+    savedAt: Long,
+    modifier: Modifier,
+    onClick: () -> Unit,
+) {
+    val title = game.displayTitle(false)
+    val shape = RoundedCornerShape(18.dp)
+    val ago = remember(savedAt) {
+        android.text.format.DateUtils.getRelativeTimeSpanString(
+            savedAt, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS,
+        ).toString().replaceFirstChar { it.lowercase() }
+    }
+    Row(
+        modifier
+            .controllerFocusable("buzz.continue", shape, onConfirm = onClick)
+            .clip(shape)
+            .background(BuzzColors.Surface)
+            .border(3.dp, BuzzColors.Yellow, shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = "Continue $title" }
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Box(
+            Modifier.fillMaxHeight().aspectRatio(0.72f).clip(RoundedCornerShape(10.dp)).background(BuzzColors.Ring),
+            contentAlignment = Alignment.Center,
+        ) {
+            val model: Any? = customCover ?: game.coverUrl
+            if (model != null) AsyncImage(model, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+        }
+        Column(
+            Modifier.fillMaxHeight().weight(1f).padding(bottom = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp, Alignment.Bottom),
+        ) {
+            Text("CONTINUE", color = BuzzColors.Yellow, fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
+            Text(title, color = BuzzColors.Text, fontSize = 19.sp, fontWeight = FontWeight.Black, lineHeight = 23.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            Text("Picks up from your last save, $ago", color = BuzzColors.Dim, fontSize = 13.sp, lineHeight = 18.sp)
+        }
     }
 }
 

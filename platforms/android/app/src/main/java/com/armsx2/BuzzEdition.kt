@@ -39,6 +39,15 @@ object BuzzEdition {
                 .putInt("usb.port0.subtype", 0)
                 .apply()
         }
+        // Autosave on by default, so the games screen's Continue tile always has something to pick
+        // up from: a save whenever a game is closed, and one every five minutes while playing (in
+        // case the Thor is switched off mid-game). Only set when never chosen, so a change made in
+        // the emulator settings sticks.
+        val edit = prefs.edit()
+        if (!prefs.contains("autoSaveOnExit")) edit.putBoolean("autoSaveOnExit", true)
+        if (!prefs.contains(MainActivityRuntime.KEY_AUTOSAVE_INTERVAL_MIN))
+            edit.putInt(MainActivityRuntime.KEY_AUTOSAVE_INTERVAL_MIN, 5)
+        edit.apply()
         // The second set of buzzers, on port 2, only while the game is set up for 5-8 players.
         val second = if (BuzzPad.playerCount() > BuzzPad.PER_SET) BuzzPad.DEVICE_TYPE else "None"
         if ((prefs.getString("usb.port1.type", "None") ?: "None") != second) {

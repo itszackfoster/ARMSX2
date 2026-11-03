@@ -60,11 +60,37 @@ internal fun BuzzWordmark(size: TextUnit, dot: Dp) {
 object BuzzNav {
     @Volatile var back: (() -> Unit)? = null
 
-    /** B on a Buzz screen: close the sub-screen if one is open. True when it was handled. */
+    /** Set while the games screen is showing: Start opens settings, Select quits. */
+    @Volatile var openSettings: (() -> Unit)? = null
+    @Volatile var quit: (() -> Unit)? = null
+
+    /** The join code shown large on the top screen (Y on the games screen). */
+    val showJoin = androidx.compose.runtime.mutableStateOf(false)
+
+    /** B on a Buzz screen: close the join code or the sub-screen if one is open. True when it was handled. */
     fun handleBack(): Boolean {
+        if (showJoin.value) {
+            showJoin.value = false
+            return true
+        }
         val b = back ?: return false
         b()
         return true
+    }
+}
+
+/** A controller button drawn as a small key cap, for the hints bar. */
+@Composable
+internal fun KeyCap(label: String) {
+    Box(
+        Modifier
+            .heightIn(min = 28.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(BuzzColors.Ring)
+            .padding(horizontal = 7.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, color = BuzzColors.Text, fontSize = 13.sp, fontWeight = FontWeight.Black)
     }
 }
 

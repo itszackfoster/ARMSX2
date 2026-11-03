@@ -12,6 +12,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
+import com.armsx2.runtime.MainActivityRuntime
 import kotlin.concurrent.thread
 
 /**
@@ -21,9 +22,10 @@ import kotlin.concurrent.thread
  * QR code for it), gets a full-screen buzzer page, and talks back over a WebSocket. Nothing to
  * install on the phone: any browser will do, iPhone or Android.
  *
- * Each phone claims one player slot. Presses go into the emulated Buzz device exactly as the
- * bottom-screen buzzers do, through NativeApp.usbLightgunButton. When a phone disconnects, any
- * button it was holding is released and its slot goes back to the Thor's screen.
+ * A phone joins with a name and a seat (the page suggests one), and gets a token so it can come
+ * back to the same seat if it drops off: the seat is held for a minute. Presses go into the
+ * emulated Buzz device exactly as the bottom-screen buzzers do. Every two seconds each phone is
+ * pinged, and the round trip becomes the signal strength the screens show.
  *
  * Slot rule (see [claimSlot]): the Thor's screen holds up to four players; phones fill the rest
  * of the game first (players 5-8), then take the screen's highest player. [screenSlots] is the
@@ -36,32 +38,71 @@ object BuzzPhones {
     const val PORT = 8642
     private const val WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+    /** How long a phone that dropped off keeps its seat. */
+    private const val HOLD_SEAT_MS = 60_000L
+    private const val PING_MS = 2_000L
+
     private class Client(val socket: Socket, val out: OutputStream) {
         @Volatile var slot = -1
+        /** Joined a seat (the join form is done). Until then it gets seat updates. */
+        @Volatile var joined = false
+        @Volatile var lastPong = System.currentTimeMillis()
         /** Buttons (0 red .. 4 yellow) this phone is holding down. */
         val held = HashSet<Int>()
+    }
+
+    /** A seat a phone holds: while connected, and for [HOLD_SEAT_MS] after it drops off. */
+    private class Seat(val token: String, var name: String) {
+        var client: Client? = null
+        var lostAt = 0L
+        var quality = Quality.GOOD
+    }
+
+    enum class Quality(val label: String) { GOOD("strong signal"), OK("fair signal"), WEAK("weak signal") }
+
+    /** What the screens show about a phone player. */
+    data class PhoneSeat(val slot: Int, val name: String, val connected: Boolean, val quality: Quality) {
+        val where: String get() = if (connected) "Phone · ${quality.label}" else "Phone · reconnecting"
     }
 
     private var server: ServerSocket? = null
     private val lock = Any()
     private val clients = HashSet<Client>()
-    private val slotOwner = arrayOfNulls<Client>(BuzzPad.PLAYERS)
+    private val seats = arrayOfNulls<Seat>(BuzzPad.PLAYERS)
     private val main = Handler(Looper.getMainLooper())
 
-    /** Called on the main thread whenever a phone joins or leaves. */
+    /** Called on the main thread whenever a phone joins, leaves or changes. */
     private val listeners = LinkedHashSet<() -> Unit>()
+
+    /** Bumped on every change, for Compose screens (the pause menu's player list). */
+    val version = androidx.compose.runtime.mutableIntStateOf(0)
 
     @Volatile private var force = false
 
     fun addListener(l: () -> Unit) { listeners += l }
     fun removeListener(l: () -> Unit) { listeners -= l }
-    private fun notifyChanged() = main.post { listeners.toList().forEach { runCatching { it() } } }
+    private fun notifyChanged() {
+        main.post {
+            version.intValue++
+            listeners.toList().forEach { runCatching { it() } }
+        }
+        // Phones still on the join form see seats come and go.
+        val waiting = synchronized(lock) { clients.filter { !it.joined } }
+        waiting.forEach { c -> thread(isDaemon = true) { send(c, helloJson()) } }
+    }
 
-    // ---- Slots ----------------------------------------------------------------------------------
+    // ---- Seats ----------------------------------------------------------------------------------
 
-    /** Player slots (0-based) held by phones. */
+    /** Player slots (0-based) held by phones, including ones briefly reconnecting. */
     fun phoneSlots(): Set<Int> = synchronized(lock) {
-        slotOwner.indices.filter { slotOwner[it] != null }.toSet()
+        seats.indices.filter { seats[it] != null }.toSet()
+    }
+
+    /** Every phone player, for the roster, the bottom bar and the pause menu. */
+    fun phoneSeats(): List<PhoneSeat> = synchronized(lock) {
+        seats.indices.mapNotNull { i ->
+            seats[i]?.let { PhoneSeat(i, it.name, it.client != null, it.quality) }
+        }
     }
 
     /** Players the Thor's bottom screen should show: the first players in the game that no phone
@@ -72,19 +113,80 @@ object BuzzPhones {
             .take(BuzzPad.SCREEN_MAX).toIntArray()
     }
 
-    /** A phone takes the first player in the game that is neither on a phone nor on the Thor's
-     *  screen (players 5-8); failing that, the highest-numbered player on the screen, which the
-     *  screen then drops. Every player already on a phone: the game is full. */
-    private fun claimSlot(c: Client): Int = synchronized(lock) {
+    /** The seat a phone gets when it does not ask for one: the first player in the game that is
+     *  neither on a phone nor on the Thor's screen (players 5-8); failing that, the highest
+     *  player on the screen, which the screen then drops. -1: every player is on a phone. */
+    private fun suggestedSlot(): Int {
         val count = BuzzPad.playerCount().coerceAtMost(BuzzPad.PLAYERS)
-        val phones = (0 until BuzzPad.PLAYERS).filter { slotOwner[it] != null }.toSet()
+        val phones = (0 until BuzzPad.PLAYERS).filter { seats[it] != null }.toSet()
         val screen = (0 until count).filter { it !in phones }.take(BuzzPad.SCREEN_MAX)
-        val slot = (0 until count).firstOrNull { it !in phones && it !in screen }
-            ?: screen.lastOrNull()
-            ?: return -1
-        slotOwner[slot] = c
+        return (0 until count).firstOrNull { it !in phones && it !in screen } ?: screen.lastOrNull() ?: -1
+    }
+
+    /** Seat [c] as [name], in [wanted] if that is free, otherwise the suggested seat. */
+    private fun takeSeat(c: Client, wanted: Int, name: String, token: String): Int = synchronized(lock) {
+        val count = BuzzPad.playerCount().coerceAtMost(BuzzPad.PLAYERS)
+        val slot = wanted.takeIf { it in 0 until count && seats[it] == null } ?: suggestedSlot()
+        if (slot < 0) return -1
+        seats[slot] = Seat(token, name).also { it.client = c }
         c.slot = slot
+        c.joined = true
         slot
+    }
+
+    /** A phone back after dropping off, with the token it was given: its seat, if still held. */
+    private fun rejoin(c: Client, token: String): Int = synchronized(lock) {
+        val slot = seats.indexOfFirst { it != null && it.token == token }
+        if (slot < 0) return -1
+        val seat = seats[slot]!!
+        seat.client?.let { old -> runCatching { old.socket.close() } }
+        seat.client = c
+        seat.lostAt = 0L
+        c.slot = slot
+        c.joined = true
+        slot
+    }
+
+    /** What the join form needs: how many players, which seats are taken, and a suggestion. */
+    private fun helloJson(): String = synchronized(lock) {
+        val count = BuzzPad.playerCount().coerceAtMost(BuzzPad.PLAYERS)
+        val screen = screenSlots(count).toSet()
+        val states = (0 until BuzzPad.PLAYERS).joinToString(",") { i ->
+            val state = when {
+                i >= count -> "off"
+                seats[i] != null -> "phone"
+                i in screen -> "thor"
+                else -> "free"
+            }
+            "\"$state\""
+        }
+        val title = MainActivityRuntime.currentGame.value?.displayTitle(false).orEmpty()
+        org.json.JSONObject()
+            .put("t", "hello")
+            .put("count", count)
+            .put("suggest", suggestedSlot() + 1)
+            .put("game", title)
+            .toString()
+            .dropLast(1) + ",\"seats\":[$states]}"
+    }
+
+    /**
+     * Take a phone player off: back to the Thor's screen ([moved]) or out of the game. The phone
+     * is told why and does not try to reconnect.
+     */
+    fun removePlayer(slot: Int, moved: Boolean) {
+        val client = synchronized(lock) {
+            val seat = seats.getOrNull(slot) ?: return
+            seats[slot] = null
+            seat.client
+        }
+        client?.let { c ->
+            releaseHeld(c)
+            c.slot = -1
+            send(c, """{"t":"kicked","why":"${if (moved) "moved" else "removed"}"}""")
+            runCatching { c.socket.close() }
+        }
+        notifyChanged()
     }
 
     // ---- Lifecycle ------------------------------------------------------------------------------
@@ -101,6 +203,7 @@ object BuzzPhones {
             }
         }.getOrNull() ?: return
         server = ss
+        thread(name = "BuzzPhones-ticker", isDaemon = true) { tick(ss) }
         thread(name = "BuzzPhones-accept", isDaemon = true) {
             while (!ss.isClosed) {
                 val sock = runCatching { ss.accept() }.getOrNull() ?: break
@@ -113,8 +216,45 @@ object BuzzPhones {
         val ss = server ?: return
         server = null
         runCatching { ss.close() }
-        val all = synchronized(lock) { clients.toList() }
+        val all = synchronized(lock) {
+            seats.fill(null)
+            clients.toList()
+        }
         all.forEach { runCatching { it.socket.close() } }
+        notifyChanged()
+    }
+
+    /** Every [PING_MS]: measure each phone's round trip, and free seats held too long. */
+    private fun tick(ss: ServerSocket) {
+        while (!ss.isClosed) {
+            runCatching { Thread.sleep(PING_MS) }
+            val now = System.currentTimeMillis()
+            var changed = false
+            val live = synchronized(lock) {
+                for (i in seats.indices) {
+                    val seat = seats[i] ?: continue
+                    if (seat.client == null && now - seat.lostAt > HOLD_SEAT_MS) {
+                        seats[i] = null
+                        changed = true
+                    }
+                }
+                clients.filter { it.joined }
+            }
+            live.forEach { c ->
+                send(c, """{"t":"ping","k":$now}""")
+                // No answer to the last three pings: call it weak before the socket gives up.
+                if (now - c.lastPong > PING_MS * 3) changed = setQuality(c, Quality.WEAK) || changed
+            }
+            if (changed) notifyChanged()
+        }
+    }
+
+    /** True when it changed. */
+    private fun setQuality(c: Client, q: Quality): Boolean = synchronized(lock) {
+        val seat = seats.getOrNull(c.slot)?.takeIf { it.client === c } ?: return false
+        if (seat.quality == q) return false
+        seat.quality = q
+        true
     }
 
     /** Thor's force-colours toggle, mirrored on every phone. */
@@ -207,15 +347,8 @@ object BuzzPhones {
 
         val c = Client(sock, out)
         synchronized(lock) { clients += c }
-        val slot = claimSlot(c)
-        if (slot < 0) {
-            send(c, """{"t":"full"}""")
-            synchronized(lock) { clients -= c }
-            return
-        }
-        send(c, """{"t":"slot","p":${slot + 1}}""")
-        send(c, """{"t":"force","on":$force}""")
-        notifyChanged()
+        // The phone answers with "rejoin" (it has a seat token) or "join" (from the form).
+        send(c, helloJson())
 
         try {
             while (true) {
@@ -256,8 +389,13 @@ object BuzzPhones {
         }
     }
 
-    /** "d<n>" presses button n (0 red, 1 blue, 2 orange, 3 green, 4 yellow), "u<n>" releases it. */
+    /** "d<n>" presses button n (0 red, 1 blue, 2 orange, 3 green, 4 yellow), "u<n>" releases it.
+     *  Anything else is a JSON message: join, rejoin or pong. */
     private fun handle(c: Client, msg: String) {
+        if (msg.startsWith("{")) {
+            handleJson(c, msg)
+            return
+        }
         if (msg.length != 2) return
         val button = msg[1] - '0'
         if (button !in 0..4 || c.slot < 0) return
@@ -267,15 +405,67 @@ object BuzzPhones {
         }
     }
 
+    private fun handleJson(c: Client, msg: String) {
+        val json = runCatching { org.json.JSONObject(msg) }.getOrNull() ?: return
+        when (json.optString("t")) {
+            "pong" -> {
+                val now = System.currentTimeMillis()
+                c.lastPong = now
+                val rtt = now - json.optLong("k", now)
+                val q = when {
+                    rtt < 80 -> Quality.GOOD
+                    rtt < 200 -> Quality.OK
+                    else -> Quality.WEAK
+                }
+                send(c, """{"t":"sig","q":"${q.name.lowercase()}"}""")
+                if (setQuality(c, q)) notifyChanged()
+            }
+            "rejoin" -> {
+                val slot = rejoin(c, json.optString("token"))
+                if (slot < 0) send(c, helloJson()) else seated(c, slot)
+            }
+            "join" -> {
+                if (c.joined) return
+                val name = json.optString("name").trim().take(16).ifBlank { "Player" }
+                val token = json.optString("token").take(64).ifBlank { java.util.UUID.randomUUID().toString() }
+                val slot = takeSeat(c, json.optInt("seat", 0) - 1, name, token)
+                if (slot < 0) send(c, """{"t":"full"}""") else seated(c, slot)
+            }
+        }
+    }
+
+    private fun seated(c: Client, slot: Int) {
+        val seat = synchronized(lock) { seats[slot] } ?: return
+        val reply = org.json.JSONObject()
+            .put("t", "slot")
+            .put("p", slot + 1)
+            .put("name", seat.name)
+            .put("token", seat.token)
+            .put("colour", BuzzPad.seatColourHex(slot))
+        send(c, reply.toString())
+        send(c, """{"t":"force","on":$force}""")
+        c.lastPong = System.currentTimeMillis()
+        notifyChanged()
+    }
+
     private fun press(slot: Int, button: Int, down: Boolean) = BuzzPad.pressSlot(slot, button, down)
 
-    private fun disconnect(c: Client) {
+    private fun releaseHeld(c: Client) {
         // Never leave a buzzer stuck down in the game because a phone locked or walked away.
         val held = synchronized(c.held) { c.held.toList().also { c.held.clear() } }
-        held.forEach { press(c.slot, it, false) }
+        if (c.slot >= 0) held.forEach { press(c.slot, it, false) }
+    }
+
+    private fun disconnect(c: Client) {
+        releaseHeld(c)
         synchronized(lock) {
             clients -= c
-            if (c.slot >= 0 && slotOwner[c.slot] === c) slotOwner[c.slot] = null
+            // Keep the seat for a minute, so a phone that dropped off can come straight back.
+            val seat = seats.getOrNull(c.slot)
+            if (seat != null && seat.client === c) {
+                seat.client = null
+                seat.lostAt = System.currentTimeMillis()
+            }
         }
         runCatching { c.socket.close() }
         notifyChanged()
@@ -292,7 +482,13 @@ object BuzzPhones {
         runCatching {
             synchronized(c.out) {
                 c.out.write(0x80 or opcode)
-                c.out.write(data.size) // every message here is well under 126 bytes
+                if (data.size < 126) {
+                    c.out.write(data.size)
+                } else {
+                    c.out.write(126)
+                    c.out.write(data.size shr 8 and 0xFF)
+                    c.out.write(data.size and 0xFF)
+                }
                 c.out.write(data)
                 c.out.flush()
             }

@@ -3553,6 +3553,27 @@ open class MainActivityRuntime : ComponentActivity() {
         // live here). The hook is non-null ONLY while the settings screen is composed, so
         // in-game L1/R1 still goes to the pad untouched. Placed after the capture blocks so
         // binding a shoulder button still works.
+        // Buzz Launcher games screen: Y shows the phone join code, Start opens settings, Select
+        // closes the app.
+        if (com.armsx2.BuzzEdition.ENABLED &&
+            (kc == KeyEvent.KEYCODE_BUTTON_Y || kc == KeyEvent.KEYCODE_BUTTON_START ||
+                kc == KeyEvent.KEYCODE_MENU || kc == KeyEvent.KEYCODE_BUTTON_SELECT) &&
+            eState.value == EmuState.STOPPED &&
+            com.armsx2.navigation.UiNavigator.route.value == com.armsx2.navigation.AppRoute.Home &&
+            com.armsx2.ui.buzz.BuzzNav.back == null &&
+            com.armsx2.ui.buzz.BuzzNav.openSettings != null
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val nav = com.armsx2.ui.buzz.BuzzNav
+                when (kc) {
+                    KeyEvent.KEYCODE_BUTTON_Y ->
+                        if (com.armsx2.BuzzEdition.phonesEnabled.value) nav.showJoin.value = !nav.showJoin.value
+                    KeyEvent.KEYCODE_BUTTON_SELECT -> nav.quit?.invoke()
+                    else -> { nav.showJoin.value = false; nav.openSettings?.invoke() }
+                }
+            }
+            return true
+        }
         // Buzz Launcher games screen: L1 / R1 change how many players are in the game.
         if (com.armsx2.BuzzEdition.ENABLED &&
             (kc == KeyEvent.KEYCODE_BUTTON_L1 || kc == KeyEvent.KEYCODE_BUTTON_R1) &&

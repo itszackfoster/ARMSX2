@@ -123,12 +123,37 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         )
         private val COLOUR_ORDER = intArrayOf(BLUE, ORANGE, GREEN, YELLOW)
 
+        /** Each seat's colour: on the Thor's labels, the roster, phone chips and the phone itself. */
+        private val SEAT_COLOURS = intArrayOf(
+            0xFFF4D21F.toInt(), 0xFF1F6FDB.toInt(), 0xFFF2871C.toInt(), 0xFF2EAF4B.toInt(),
+            0xFFE05BB5.toInt(), 0xFF3FC1C9.toInt(), 0xFFB38BFA.toInt(), 0xFFE6EAF0.toInt(),
+        )
+
+        fun seatColour(slot: Int): Int = SEAT_COLOURS[slot.coerceIn(0, PLAYERS - 1)]
+
+        fun seatColourHex(slot: Int): String = String.format("#%06X", seatColour(slot) and 0xFFFFFF)
+
+        /** A black-on-white QR code of [text], [size] pixels square, or null if it will not encode. */
+        fun makeQrBitmap(text: String, size: Int): Bitmap? = runCatching {
+            val hints = mapOf(com.google.zxing.EncodeHintType.MARGIN to 0)
+            val m = com.google.zxing.qrcode.QRCodeWriter()
+                .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size, hints)
+            val px = IntArray(size * size)
+            for (y in 0 until size) for (x in 0 until size)
+                px[y * size + x] = if (m.get(x, y)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
+            Bitmap.createBitmap(px, size, size, Bitmap.Config.ARGB_8888)
+        }.getOrNull()
+
+        /** How long a buzz lights up its player's cell. */
+        private const val BUZZ_GLOW_MS = 1500L
+
         // Touch targets other than buzzers.
         private const val UI_NONE = 0
         private const val UI_FORCE = 1
         private const val UI_PHONES = 2
         private const val UI_CLOSE_QR = 3
-        private const val UI_COUNT = 4 // + n - 1 for player count n
+        private const val UI_MINUS = 4
+        private const val UI_PLUS = 5
 
         private const val POLL_MS = 400L
     }
@@ -149,6 +174,9 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     private val animators = arrayOfNulls<ValueAnimator>(PLAYERS)
 
     private var forceColours = false
+
+    /** When each player last buzzed (uptime ms), for the "Buzzed in" highlight. */
+    private val buzzedAt = LongArray(PLAYERS)
     private var showQr = false
     private var qr: Bitmap? = null
     private var qrUrl: String? = null
@@ -199,7 +227,9 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     private val gridRect = RectF()
     private val forceRect = RectF()
     private val phonesRect = RectF()
-    private val countRects = Array(PLAYERS) { RectF() }
+    private val minusRect = RectF()
+    private val plusRect = RectF()
+    private val seatRects = Array(PLAYERS) { RectF() }
     private val lobbyQrRect = RectF()
 
     // ---- Paint -----------------------------------------------------------------------------------
@@ -295,22 +325,28 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         val barTop = h - barH - gap
         val btn = barH
         forceRect.set(w - gap - btn, barTop, w - gap, barTop + btn)
-        if (BuzzEdition.phonesEnabled.value) phonesRect.set(gap, barTop, gap + 150 * dp, barTop + btn)
+        // Phone chips and the add-a-phone button share the bar to the left of the force button;
+        // a tap anywhere on them opens the join code.
+        if (BuzzEdition.phonesEnabled.value) phonesRect.set(gap, barTop, forceRect.left - gap, barTop + btn)
         else phonesRect.setEmpty()
         gridRect.set(0f, 0f, w, barTop)
 
-        // Lobby: a row of player-count buttons, then the phone QR below it.
-        val pad = 28 * dp
-        val countTop = pad + 34 * dp
-        val countGap = 8 * dp
-        val countW = (w - pad * 2 - countGap * (PLAYERS - 1)) / PLAYERS
+        // Lobby: a player-count stepper and a small join code across the top, then the seats.
+        val pad = 18 * dp
+        val stepper = 44 * dp
+        minusRect.set(pad, pad, pad + stepper, pad + stepper)
+        plusRect.set(pad + stepper + 120 * dp, pad, pad + stepper * 2 + 120 * dp, pad + stepper)
+        val qrSize = 64 * dp
+        lobbyQrRect.set(w - pad - qrSize, pad - 10 * dp, w - pad, pad - 10 * dp + qrSize)
+        val seatTop = pad + stepper + 22 * dp
+        val seatGap = 8 * dp
+        val seatW = (w - pad * 2 - seatGap) / 2f
+        val seatH = minOf(52 * dp, (h - seatTop - pad - 28 * dp - seatGap * 3) / 4f)
         for (i in 0 until PLAYERS) {
-            val left = pad + i * (countW + countGap)
-            countRects[i].set(left, countTop, left + countW, countTop + 64 * dp)
+            val left = pad + (i % 2) * (seatW + seatGap)
+            val top = seatTop + (i / 2) * (seatH + seatGap)
+            seatRects[i].set(left, top, left + seatW, top + seatH)
         }
-        val qrTop = countTop + 64 * dp + 44 * dp
-        val qrSize = minOf(190 * dp, h - qrTop - pad)
-        lobbyQrRect.set(pad, qrTop, pad + qrSize, qrTop + qrSize)
 
         // Player cells above it (at most SCREEN_MAX): 1 to 3 in one row, 4 as 2x2.
         val n = visible.size
@@ -369,9 +405,26 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     private fun drawPlayer(canvas: Canvas, slot: Int) {
         val q = cell[slot]
-        fill.color = 0xFF161A22.toInt()
+        val glow = android.os.SystemClock.uptimeMillis() - buzzedAt[slot] < BUZZ_GLOW_MS
+        fill.color = if (glow) 0xFF2A1416.toInt() else 0xFF161A22.toInt()
         canvas.drawRoundRect(q, 18 * dp, 18 * dp, fill)
-        canvas.drawText("PLAYER ${slot + 1}", q.centerX(), q.top + 19 * dp, label)
+        if (glow) {
+            val edge = Paint(stroke).apply { color = FACE[RED]; strokeWidth = 2.5f * dp }
+            tmp.set(q); tmp.inset(1.5f * dp, 1.5f * dp)
+            canvas.drawRoundRect(tmp, 17 * dp, 17 * dp, edge)
+        }
+        // Seat colour dot, then the player (or the buzz) in the label.
+        val text = if (glow) "BUZZED IN" else "PLAYER ${slot + 1}"
+        val tw = label.measureText(text)
+        val dotR = 6 * dp
+        val startX = q.centerX() - (tw + dotR * 2 + 6 * dp) / 2f
+        fill.color = seatColour(slot)
+        canvas.drawCircle(startX + dotR, q.top + 14 * dp, dotR, fill)
+        label.color = if (glow) 0xFFFF8A80.toInt() else 0xCCFFFFFF.toInt()
+        label.textAlign = Paint.Align.LEFT
+        canvas.drawText(text, startX + dotR * 2 + 6 * dp, q.top + 19 * dp, label)
+        label.textAlign = Paint.Align.CENTER
+        label.color = 0xCCFFFFFF.toInt()
 
         val t = shown(slot)
 
@@ -416,6 +469,10 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         canvas.drawCircle(cx, cy, r, stroke)
     }
 
+    /**
+     * The lobby (no game running): the player count, a small join code, and a seat for every
+     * player in the game, saying who is in it and where they play.
+     */
     private fun drawLobby(canvas: Canvas) {
         val w = width.toFloat()
         val h = height.toFloat()
@@ -424,81 +481,103 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             canvas.drawText("Your buzzers will appear here as soon as a game starts", w / 2f, h / 2f + 26 * dp, dim)
             return
         }
-        val pad = 28 * dp
-        canvas.drawText("How many players?", pad, pad + 18 * dp, header(18f, Paint.Align.LEFT))
-        val selected = playerCount()
-        for (i in 0 until PLAYERS) {
-            val r = countRects[i]
-            val on = i + 1 == selected
-            fill.color = if (on) FACE[YELLOW] else 0xFF161A22.toInt()
-            canvas.drawRoundRect(r, 16 * dp, 16 * dp, fill)
-            val p = header(26f, Paint.Align.CENTER)
-            p.color = if (on) 0xFF0B0D12.toInt() else 0xFFE6EAF0.toInt()
-            canvas.drawText("${i + 1}", r.centerX(), r.centerY() - (p.ascent() + p.descent()) / 2f, p)
-        }
-        val divY = countRects[0].bottom + 22 * dp
-        fill.color = 0x1FFFFFFF
-        canvas.drawRect(pad, divY, w - pad, divY + 1 * dp, fill)
-
-        if (!BuzzEdition.phonesEnabled.value) {
-            canvas.drawText("Phone buzzers are off. Turn them on in Settings.", w / 2f, divY + 60 * dp, dim)
-            return
-        }
-        // QR on the left, how to join on the right.
-        val q = lobbyQrRect
-        fill.color = 0xFFFFFFFF.toInt()
-        canvas.drawRoundRect(q, 14 * dp, 14 * dp, fill)
-        val inset = 12 * dp
-        val bmp = qr
-        if (qrUrl != null && bmp != null) {
-            tmp.set(q.left + inset, q.top + inset, q.right - inset, q.bottom - inset)
-            canvas.drawBitmap(bmp, null, tmp, null)
-        } else {
-            val p = header(14f, Paint.Align.CENTER)
-            p.color = 0xFF161A22.toInt()
-            canvas.drawText("No Wi-Fi", q.centerX(), q.centerY(), p)
-        }
-        val textLeft = q.right + 22 * dp
-        val textW = (w - pad - textLeft).toInt().coerceAtLeast(1)
-        var y = q.top + 20 * dp
-        canvas.drawText("Or play on your phone", textLeft, y, header(20f, Paint.Align.LEFT))
-        y += 14 * dp
         val count = playerCount()
-        val blurb = if (qrUrl != null && count > SCREEN_MAX)
-            "Players ${SCREEN_MAX + 1} to $count play on phones. Scan with your camera; phones need to be on the same Wi-Fi as the Thor."
-        else if (qrUrl != null)
-            "Scan with your camera. Phones need to be on the same Wi-Fi as the Thor."
-        else
-            "Connect the Thor to Wi-Fi, or turn on its hotspot, and a code to scan appears here."
-        val layout = StaticLayout.Builder.obtain(blurb, 0, blurb.length, para, textW)
-            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-            .setLineSpacing(0f, 1.3f)
-            .build()
-        canvas.save()
-        canvas.translate(textLeft, y)
-        layout.draw(canvas)
-        canvas.restore()
-        y += layout.height + 24 * dp
-        qrUrl?.let {
-            val p = header(15f, Paint.Align.LEFT)
-            p.typeface = Typeface.DEFAULT
-            canvas.drawText(it, textLeft, y, p)
-            y += 30 * dp
+        // Stepper.
+        for ((r, sign) in listOf(minusRect to "−", plusRect to "+")) {
+            fill.color = 0xFF161A22.toInt()
+            canvas.drawRoundRect(r, 12 * dp, 12 * dp, fill)
+            val p = header(24f, Paint.Align.CENTER)
+            canvas.drawText(sign, r.centerX(), r.centerY() - (p.ascent() + p.descent()) / 2f, p)
         }
-        // One chip per player who has joined on a phone.
-        var x = textLeft
-        val chip = header(13f, Paint.Align.LEFT)
-        chip.color = 0xFF9CC3FF.toInt()
-        for (slot in BuzzPhones.phoneSlots().sorted()) {
-            val text = "Player ${slot + 1} on a phone"
-            val cw = chip.measureText(text) + 24 * dp
-            if (x + cw > w - pad) { x = textLeft; y += 36 * dp }
-            fill.color = 0x331F6FDB
-            tmp.set(x, y - 20 * dp, x + cw, y + 8 * dp)
-            canvas.drawRoundRect(tmp, 14 * dp, 14 * dp, fill)
-            canvas.drawText(text, x + 12 * dp, y - 1 * dp, chip)
-            x += cw + 8 * dp
+        val countText = header(20f, Paint.Align.CENTER)
+        canvas.drawText(
+            if (count == 1) "1 player" else "$count players",
+            (minusRect.right + plusRect.left) / 2f,
+            minusRect.centerY() - (countText.ascent() + countText.descent()) / 2f,
+            countText,
+        )
+
+        // Join code, top right, with a line saying what it is.
+        val phones = BuzzEdition.phonesEnabled.value
+        val q = lobbyQrRect
+        if (phones) {
+            fill.color = 0xFFFFFFFF.toInt()
+            canvas.drawRoundRect(q, 8 * dp, 8 * dp, fill)
+            val bmp = qr
+            if (qrUrl != null && bmp != null) {
+                tmp.set(q); tmp.inset(5 * dp, 5 * dp)
+                canvas.drawBitmap(bmp, null, tmp, null)
+            } else {
+                val p = header(11f, Paint.Align.CENTER)
+                p.color = 0xFF161A22.toInt()
+                canvas.drawText("No Wi-Fi", q.centerX(), q.centerY() + 4 * dp, p)
+            }
         }
+        val joinRight = if (phones) q.left - 10 * dp else w - 18 * dp
+        canvas.drawText(if (phones) "Join on a phone" else "Phone buzzers off", joinRight, q.centerY() - 2 * dp, header(14f, Paint.Align.RIGHT))
+        val small = Paint(dim).apply { textAlign = Paint.Align.RIGHT; textSize = 12 * dp }
+        canvas.drawText(if (phones) "Tap the code to enlarge" else "Turn on in Settings", joinRight, q.centerY() + 14 * dp, small)
+
+        // Seats.
+        val phoneSeats = BuzzPhones.phoneSeats().associateBy { it.slot }
+        val screen = BuzzPhones.screenSlots(count).toSet()
+        for (i in 0 until count) {
+            val r = seatRects[i]
+            val seat = phoneSeats[i]
+            val onThor = i in screen
+            val waiting = seat == null && !onThor
+            if (waiting) {
+                val dash = Paint(stroke).apply {
+                    color = 0x26FFFFFF
+                    strokeWidth = 2 * dp
+                    pathEffect = android.graphics.DashPathEffect(floatArrayOf(6 * dp, 5 * dp), 0f)
+                }
+                tmp.set(r); tmp.inset(dp, dp)
+                canvas.drawRoundRect(tmp, 12 * dp, 12 * dp, dash)
+            } else {
+                fill.color = 0xFF161A22.toInt()
+                canvas.drawRoundRect(r, 12 * dp, 12 * dp, fill)
+            }
+            val dotR = 15 * dp
+            val cx = r.left + 12 * dp + dotR
+            fill.color = if (waiting) 0xFF2A2F3A.toInt() else seatColour(i)
+            canvas.drawCircle(cx, r.centerY(), dotR, fill)
+            val num = header(14f, Paint.Align.CENTER)
+            num.color = if (waiting) 0xFF9AA0A6.toInt() else 0xFF0B0D12.toInt()
+            canvas.drawText("${i + 1}", cx, r.centerY() - (num.ascent() + num.descent()) / 2f, num)
+            val textX = cx + dotR + 10 * dp
+            val name = when {
+                seat != null -> seat.name
+                onThor -> "Player ${i + 1}"
+                else -> "Waiting for a phone"
+            }
+            val where = when {
+                seat != null -> seat.where
+                onThor -> "Thor screen"
+                phones -> "Scan the code to take this seat"
+                else -> "Needs phone buzzers"
+            }
+            val namePaint = header(15f, Paint.Align.LEFT)
+            if (waiting) namePaint.color = 0xFF9AA0A6.toInt()
+            val maxW = r.right - textX - 8 * dp
+            canvas.drawText(ellipsize(name, namePaint, maxW), textX, r.centerY() - 2 * dp, namePaint)
+            val wherePaint = Paint(dim).apply {
+                textAlign = Paint.Align.LEFT
+                textSize = 11.5f * dp
+                if (seat != null && (!seat.connected || seat.quality == BuzzPhones.Quality.WEAK)) color = 0xFFFFB37A.toInt()
+            }
+            canvas.drawText(ellipsize(where, wherePaint, maxW), textX, r.centerY() + 14 * dp, wherePaint)
+        }
+        val footY = seatRects[0].top + 4 * (seatRects[0].height() + 8 * dp) + 14 * dp
+        canvas.drawText("Players 1 to 4 can share the Thor's screen. Everyone else needs a phone.", w / 2f, minOf(footY, h - 12 * dp), dim)
+        if (showQr) drawQr(canvas)
+    }
+
+    private fun ellipsize(text: String, paint: Paint, maxWidth: Float): String {
+        if (paint.measureText(text) <= maxWidth) return text
+        var end = text.length
+        while (end > 1 && paint.measureText(text.substring(0, end) + "…") > maxWidth) end--
+        return text.substring(0, end) + "…"
     }
 
     /** A bold paint at [sizeSp] (scaled like the rest of the panel), freshly made so callers can tweak it. */
@@ -511,19 +590,57 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     private fun refreshQr() {
         qrUrl = if (BuzzEdition.phonesEnabled.value) BuzzPhones.url() else null
-        qr = qrUrl?.let { makeQr(it, 512) }
+        qr = qrUrl?.let { makeQrBitmap(it, 512) }
     }
 
+    /** The bar's left side: a chip per phone player (seat colour, name, signal), then "+ Phone". */
     private fun drawPhonesButton(canvas: Canvas) {
         val r = phonesRect
         if (r.isEmpty) return
-        fill.color = if (showQr) 0xFFFFFFFF.toInt() else 0xFF2A2F3A.toInt()
-        canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, fill)
-        val count = BuzzPhones.phoneSlots().size
-        val text = if (count == 0) "Phones" else "Phones · $count"
-        label.color = if (showQr) 0xFF161A22.toInt() else 0xCCFFFFFF.toInt()
-        canvas.drawText(text, r.centerX(), r.centerY() - (label.ascent() + label.descent()) / 2f, label)
-        label.color = 0xCCFFFFFF.toInt()
+        val h = r.height()
+        val chipText = header(14f, Paint.Align.LEFT)
+        val addLabel = "+ Phone"
+        val addW = chipText.measureText(addLabel) + 32 * dp
+        var x = r.left
+        val seats = BuzzPhones.phoneSeats()
+        var shown = 0
+        for (seat in seats) {
+            val nameW = chipText.measureText(seat.name)
+            val w = 10 * dp + 20 * dp + 8 * dp + nameW + 8 * dp + 8 * dp + 12 * dp
+            if (x + w > r.right - addW - 6 * dp) break
+            fill.color = 0xFF161A22.toInt()
+            tmp.set(x, r.top, x + w, r.bottom)
+            canvas.drawRoundRect(tmp, h / 2f, h / 2f, fill)
+            val dotX = x + 10 * dp + 10 * dp
+            fill.color = seatColour(seat.slot)
+            canvas.drawCircle(dotX, r.centerY(), 10 * dp, fill)
+            val num = header(11f, Paint.Align.CENTER)
+            num.color = 0xFF0B0D12.toInt()
+            canvas.drawText("${seat.slot + 1}", dotX, r.centerY() - (num.ascent() + num.descent()) / 2f, num)
+            val textX = dotX + 10 * dp + 8 * dp
+            canvas.drawText(seat.name, textX, r.centerY() - (chipText.ascent() + chipText.descent()) / 2f, chipText)
+            fill.color = when {
+                !seat.connected -> 0xFF9AA0A6.toInt()
+                seat.quality == BuzzPhones.Quality.GOOD -> FACE[GREEN]
+                seat.quality == BuzzPhones.Quality.OK -> FACE[ORANGE]
+                else -> FACE[RED]
+            }
+            canvas.drawCircle(textX + nameW + 8 * dp + 4 * dp, r.centerY(), 4 * dp, fill)
+            x += w + 6 * dp
+            shown++
+        }
+        val more = seats.size - shown
+        val label2 = if (more > 0) "+$more · Phone" else addLabel
+        val w2 = chipText.measureText(label2) + 32 * dp
+        val dash = Paint(stroke).apply {
+            color = if (showQr) 0xFFFFFFFF.toInt() else 0x26FFFFFF
+            strokeWidth = 2 * dp
+            pathEffect = android.graphics.DashPathEffect(floatArrayOf(6 * dp, 5 * dp), 0f)
+        }
+        tmp.set(x + dp, r.top + dp, x + w2 - dp, r.bottom - dp)
+        canvas.drawRoundRect(tmp, h / 2f, h / 2f, dash)
+        chipText.color = 0xFF9AA0A6.toInt()
+        canvas.drawText(label2, x + 16 * dp, r.centerY() - (chipText.ascent() + chipText.descent()) / 2f, chipText)
     }
 
     private fun drawForceToggle(canvas: Canvas) {
@@ -544,7 +661,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     }
 
     private fun drawQr(canvas: Canvas) {
-        val g = gridRect
+        val g = if (lobby) RectF(0f, 0f, width.toFloat(), height.toFloat()) else gridRect
         fill.color = 0xF20B0D12.toInt()
         canvas.drawRect(g, fill)
         val url = qrUrl
@@ -589,16 +706,6 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         invalidate()
     }
 
-    private fun makeQr(text: String, size: Int): Bitmap? = runCatching {
-        val hints = mapOf(com.google.zxing.EncodeHintType.MARGIN to 0)
-        val m = com.google.zxing.qrcode.QRCodeWriter()
-            .encode(text, com.google.zxing.BarcodeFormat.QR_CODE, size, size, hints)
-        val px = IntArray(size * size)
-        for (y in 0 until size) for (x in 0 until size)
-            px[y * size + x] = if (m.get(x, y)) 0xFF000000.toInt() else 0xFFFFFFFF.toInt()
-        Bitmap.createBitmap(px, size, size, Bitmap.Config.ARGB_8888)
-    }.getOrNull()
-
     // ---- Touch -----------------------------------------------------------------------------------
 
     /** Which bind a touch at (x, y) lands on, or -1. */
@@ -628,7 +735,12 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     }
 
     private fun uiTargetAt(x: Float, y: Float): Int = when {
-        lobby -> if (setupDone) countRects.indexOfFirst { it.contains(x, y) }.let { if (it < 0) UI_NONE else UI_COUNT + it } else UI_NONE
+        lobby && showQr -> UI_CLOSE_QR
+        lobby && !setupDone -> UI_NONE
+        lobby && minusRect.contains(x, y) -> UI_MINUS
+        lobby && plusRect.contains(x, y) -> UI_PLUS
+        lobby && BuzzEdition.phonesEnabled.value && lobbyQrRect.contains(x, y) -> UI_PHONES
+        lobby -> UI_NONE
         forceRect.contains(x, y) -> UI_FORCE
         phonesRect.contains(x, y) -> UI_PHONES
         showQr -> UI_CLOSE_QR
@@ -659,15 +771,15 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
                     val y = event.getY(i)
                     when (uiTarget) {
                         UI_FORCE -> if (forceRect.contains(x, y)) toggleForce()
-                        UI_PHONES -> if (phonesRect.contains(x, y)) {
+                        UI_PHONES -> if (phonesRect.contains(x, y) || (lobby && lobbyQrRect.contains(x, y))) {
                             if (showQr) { showQr = false; invalidate() } else openQr()
                         }
                         UI_CLOSE_QR -> { showQr = false; invalidate() }
-                        else -> if (uiTarget >= UI_COUNT) {
-                            val n = uiTarget - UI_COUNT
-                            if (countRects[n].contains(x, y)) {
+                        UI_MINUS, UI_PLUS -> {
+                            val r = if (uiTarget == UI_MINUS) minusRect else plusRect
+                            if (r.contains(x, y)) {
                                 performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
-                                setPlayerCount(n + 1)
+                                setPlayerCount(playerCount() + if (uiTarget == UI_MINUS) -1 else 1)
                             }
                         }
                     }
@@ -688,8 +800,12 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
         val slot = bind / 5
         handler.removeCallbacks(collapse[slot])
-        // Buzzed in: load this player's colours.
-        if (bind % 5 == RED) setRevealed(slot, true)
+        // Buzzed in: light the cell up for a moment, and load this player's colours.
+        if (bind % 5 == RED) {
+            buzzedAt[slot] = android.os.SystemClock.uptimeMillis()
+            postInvalidateDelayed(BUZZ_GLOW_MS + 50)
+            setRevealed(slot, true)
+        }
         invalidate()
     }
 
