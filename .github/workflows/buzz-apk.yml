@@ -1,7 +1,7 @@
 # Builds the Buzz! second-screen fork as a sideloadable APK.
 #
 # Runs on any push to the buzz-second-screen branch, or by hand from the Actions tab
-# ("Buzz APK" -> Run workflow). The APK installs as "ARMSX2 Buzz" (com.armsx2.buzz), so it sits
+# ("Buzz APK" -> Run workflow). The APK installs as "Buzz Controller" (com.armsx2.buzz), so it sits
 # beside the official ARMSX2 rather than replacing it. Signed with the Android debug key, which is
 # fine for sideloading. Download it from the run's Artifacts section when it finishes.
 name: Buzz APK
@@ -48,7 +48,7 @@ jobs:
         run: >
           ./gradlew :app:assembleGithubRelease --stacktrace
           -Parmsx2.applicationId=com.armsx2.buzz
-          "-Parmsx2.appLabel=ARMSX2 Buzz"
+          "-Parmsx2.appLabel=Buzz Controller"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

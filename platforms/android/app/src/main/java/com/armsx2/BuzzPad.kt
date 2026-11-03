@@ -8,6 +8,9 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.os.Handler
 import android.os.Looper
 import android.view.HapticFeedbackConstants
@@ -15,6 +18,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import com.armsx2.input.UsbDevices
+import com.armsx2.runtime.MainActivityRuntime
 
 /**
  * Buzz! buzzers on the second screen (Ayn Thor bottom panel and similar).
@@ -31,6 +35,9 @@ import com.armsx2.input.UsbDevices
  *  - Force colours keeps every player's coloured buttons on, phones included, for rounds and
  *    menus that need colours without a buzz first. Tap it again to go back to buzzers.
  *  - Phones shows a QR code and address for phones to join as buzzers. Tap anywhere to close it.
+ *
+ * With no game running the panel is the lobby instead: how many players use this screen, and the
+ * QR code for phones, so everyone is set up before the game starts.
  *
  * Input goes straight into the emulated Buzz USB device through NativeApp.usbLightgunButton,
  * which despite its name presses any bind on whatever device is on that USB port. Bind ids are
@@ -99,6 +106,9 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         private const val UI_FORCE = 1
         private const val UI_PHONES = 2
         private const val UI_CLOSE_QR = 3
+        private const val UI_COUNT = 4 // + n - 1 for player count n
+
+        private const val POLL_MS = 400L
     }
 
     private val dp = resources.displayMetrics.density
@@ -132,6 +142,33 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     private val phonesChanged: () -> Unit = { onPhonesChanged() }
 
+    /** No game running: the lobby shows instead of buzzers. */
+    private var lobby = isLobbyNow()
+    private var setupDone = MainActivityRuntime.setupComplete.value
+    private var pollCount = 0
+    private val poll = object : Runnable {
+        override fun run() {
+            val nowLobby = isLobbyNow()
+            val nowSetup = MainActivityRuntime.setupComplete.value
+            if (nowLobby != lobby || nowSetup != setupDone) {
+                lobby = nowLobby
+                setupDone = nowSetup
+                releaseAll()
+                showQr = false
+                if (lobby) refreshQr()
+                relayout()
+                invalidate()
+            } else if (lobby && BuzzEdition.phonesEnabled.value && ++pollCount % 10 == 0) {
+                // The Wi-Fi may have come up (or changed) since: keep the address current.
+                if (BuzzPhones.url() != qrUrl) { refreshQr(); invalidate() }
+            }
+            handler.postDelayed(this, POLL_MS)
+        }
+    }
+
+    private fun isLobbyNow(): Boolean =
+        MainActivityRuntime.eState.value == com.armsx2.EmuState.STOPPED
+
     // ---- Geometry (recomputed in relayout) ------------------------------------------------------
 
     private val cell = Array(PLAYERS) { RectF() }
@@ -140,6 +177,8 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     private val gridRect = RectF()
     private val forceRect = RectF()
     private val phonesRect = RectF()
+    private val countRects = Array(PLAYERS) { RectF() }
+    private val lobbyQrRect = RectF()
 
     // ---- Paint -----------------------------------------------------------------------------------
 
@@ -166,6 +205,10 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         textSize = 13 * dp
     }
     private val tmp = RectF()
+    private val para = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF9AA0A6.toInt()
+        textSize = 15 * dp
+    }
 
     init {
         isClickable = true
@@ -177,8 +220,10 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        BuzzPhones.start()
+        if (BuzzEdition.phonesEnabled.value) BuzzPhones.start()
         BuzzPhones.addListener(phonesChanged)
+        if (lobby) refreshQr()
+        handler.post(poll)
         // A rebuilt panel starts with force off; make sure the phones agree.
         BuzzPhones.setForce(false)
         onPhonesChanged()
@@ -188,6 +233,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         // Never leave a buzzer stuck down in the game when the panel goes away. The phone server
         // keeps running: a panel rebuild should not kick everyone off their phones.
         BuzzPhones.removeListener(phonesChanged)
+        handler.removeCallbacks(poll)
         releaseAll()
         for (p in 0 until PLAYERS) {
             handler.removeCallbacks(collapse[p])
@@ -227,8 +273,22 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         val barTop = h - barH - gap
         val btn = barH
         forceRect.set(w - gap - btn, barTop, w - gap, barTop + btn)
-        phonesRect.set(gap, barTop, gap + 150 * dp, barTop + btn)
+        if (BuzzEdition.phonesEnabled.value) phonesRect.set(gap, barTop, gap + 150 * dp, barTop + btn)
+        else phonesRect.setEmpty()
         gridRect.set(0f, 0f, w, barTop)
+
+        // Lobby: a row of player-count buttons, then the phone QR below it.
+        val pad = 28 * dp
+        val countTop = pad + 34 * dp
+        val countGap = 10 * dp
+        val countW = (w - pad * 2 - countGap * 3) / 4f
+        for (i in 0 until PLAYERS) {
+            val left = pad + i * (countW + countGap)
+            countRects[i].set(left, countTop, left + countW, countTop + 64 * dp)
+        }
+        val qrTop = countTop + 64 * dp + 44 * dp
+        val qrSize = minOf(190 * dp, h - qrTop - pad)
+        lobbyQrRect.set(pad, qrTop, pad + qrSize, qrTop + qrSize)
 
         // Player cells above it. 1 to 3 in columns; 4 in a 2x2 grid.
         val n = visible.size
@@ -272,6 +332,10 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        if (lobby) {
+            drawLobby(canvas)
+            return
+        }
         if (visible.isEmpty()) {
             canvas.drawText("Every player is on a phone", gridRect.centerX(), gridRect.centerY(), body)
         }
@@ -330,8 +394,104 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         canvas.drawCircle(cx, cy, r, stroke)
     }
 
+    private fun drawLobby(canvas: Canvas) {
+        val w = width.toFloat()
+        val h = height.toFloat()
+        if (!setupDone) {
+            canvas.drawText("Finish setup on the top screen", w / 2f, h / 2f - 4 * dp, header(22f, Paint.Align.CENTER))
+            canvas.drawText("Your buzzers will appear here as soon as a game starts", w / 2f, h / 2f + 26 * dp, dim)
+            return
+        }
+        val pad = 28 * dp
+        canvas.drawText("How many players?", pad, pad + 18 * dp, header(18f, Paint.Align.LEFT))
+        val selected = playerCount()
+        for (i in 0 until PLAYERS) {
+            val r = countRects[i]
+            val on = i + 1 == selected
+            fill.color = if (on) FACE[YELLOW] else 0xFF161A22.toInt()
+            canvas.drawRoundRect(r, 16 * dp, 16 * dp, fill)
+            val p = header(26f, Paint.Align.CENTER)
+            p.color = if (on) 0xFF0B0D12.toInt() else 0xFFE6EAF0.toInt()
+            canvas.drawText("${i + 1}", r.centerX(), r.centerY() - (p.ascent() + p.descent()) / 2f, p)
+        }
+        val divY = countRects[0].bottom + 22 * dp
+        fill.color = 0x1FFFFFFF
+        canvas.drawRect(pad, divY, w - pad, divY + 1 * dp, fill)
+
+        if (!BuzzEdition.phonesEnabled.value) {
+            canvas.drawText("Phone buzzers are off. Turn them on in Settings.", w / 2f, divY + 60 * dp, dim)
+            return
+        }
+        // QR on the left, how to join on the right.
+        val q = lobbyQrRect
+        fill.color = 0xFFFFFFFF.toInt()
+        canvas.drawRoundRect(q, 14 * dp, 14 * dp, fill)
+        val inset = 12 * dp
+        val bmp = qr
+        if (qrUrl != null && bmp != null) {
+            tmp.set(q.left + inset, q.top + inset, q.right - inset, q.bottom - inset)
+            canvas.drawBitmap(bmp, null, tmp, null)
+        } else {
+            val p = header(14f, Paint.Align.CENTER)
+            p.color = 0xFF161A22.toInt()
+            canvas.drawText("No Wi-Fi", q.centerX(), q.centerY(), p)
+        }
+        val textLeft = q.right + 22 * dp
+        val textW = (w - pad - textLeft).toInt().coerceAtLeast(1)
+        var y = q.top + 20 * dp
+        canvas.drawText("Or play on your phone", textLeft, y, header(20f, Paint.Align.LEFT))
+        y += 14 * dp
+        val blurb = if (qrUrl != null)
+            "Scan with your camera. Phones need to be on the same Wi-Fi as the Thor."
+        else
+            "Connect the Thor to Wi-Fi, or turn on its hotspot, and a code to scan appears here."
+        val layout = StaticLayout.Builder.obtain(blurb, 0, blurb.length, para, textW)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setLineSpacing(0f, 1.3f)
+            .build()
+        canvas.save()
+        canvas.translate(textLeft, y)
+        layout.draw(canvas)
+        canvas.restore()
+        y += layout.height + 24 * dp
+        qrUrl?.let {
+            val p = header(15f, Paint.Align.LEFT)
+            p.typeface = Typeface.DEFAULT
+            canvas.drawText(it, textLeft, y, p)
+            y += 30 * dp
+        }
+        // One chip per player who has joined on a phone.
+        var x = textLeft
+        val chip = header(13f, Paint.Align.LEFT)
+        chip.color = 0xFF9CC3FF.toInt()
+        for (slot in BuzzPhones.phoneSlots().sorted()) {
+            val text = "Player ${slot + 1} on a phone"
+            val cw = chip.measureText(text) + 24 * dp
+            if (x + cw > w - pad) { x = textLeft; y += 36 * dp }
+            fill.color = 0x331F6FDB
+            tmp.set(x, y - 20 * dp, x + cw, y + 8 * dp)
+            canvas.drawRoundRect(tmp, 14 * dp, 14 * dp, fill)
+            canvas.drawText(text, x + 12 * dp, y - 1 * dp, chip)
+            x += cw + 8 * dp
+        }
+    }
+
+    /** A bold paint at [sizeSp] (scaled like the rest of the panel), freshly made so callers can tweak it. */
+    private fun header(sizeSp: Float, align: Paint.Align) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFE6EAF0.toInt()
+        typeface = Typeface.DEFAULT_BOLD
+        textAlign = align
+        textSize = sizeSp * dp
+    }
+
+    private fun refreshQr() {
+        qrUrl = if (BuzzEdition.phonesEnabled.value) BuzzPhones.url() else null
+        qr = qrUrl?.let { makeQr(it, 512) }
+    }
+
     private fun drawPhonesButton(canvas: Canvas) {
         val r = phonesRect
+        if (r.isEmpty) return
         fill.color = if (showQr) 0xFFFFFFFF.toInt() else 0xFF2A2F3A.toInt()
         canvas.drawRoundRect(r, r.height() / 2f, r.height() / 2f, fill)
         val count = BuzzPhones.phoneSlots().size
@@ -399,8 +559,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     // ---- QR --------------------------------------------------------------------------------------
 
     private fun openQr() {
-        qrUrl = BuzzPhones.url()
-        qr = qrUrl?.let { makeQr(it, 512) }
+        refreshQr()
         showQr = true
         invalidate()
     }
@@ -444,6 +603,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     }
 
     private fun uiTargetAt(x: Float, y: Float): Int = when {
+        lobby -> if (setupDone) countRects.indexOfFirst { it.contains(x, y) }.let { if (it < 0) UI_NONE else UI_COUNT + it } else UI_NONE
         forceRect.contains(x, y) -> UI_FORCE
         phonesRect.contains(x, y) -> UI_PHONES
         showQr -> UI_CLOSE_QR
@@ -461,7 +621,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
                 val target = uiTargetAt(x, y)
                 if (target != UI_NONE) {
                     if (uiPointer < 0) { uiPointer = id; uiTarget = target }
-                } else {
+                } else if (!lobby) {
                     val bind = hitTest(x, y)
                     if (bind >= 0) press(id, bind)
                 }
@@ -478,6 +638,13 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
                             if (showQr) { showQr = false; invalidate() } else openQr()
                         }
                         UI_CLOSE_QR -> { showQr = false; invalidate() }
+                        else -> if (uiTarget >= UI_COUNT) {
+                            val n = uiTarget - UI_COUNT
+                            if (countRects[n].contains(x, y)) {
+                                performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                                setPlayerCount(n + 1)
+                            }
+                        }
                     }
                     uiPointer = -1
                     uiTarget = UI_NONE

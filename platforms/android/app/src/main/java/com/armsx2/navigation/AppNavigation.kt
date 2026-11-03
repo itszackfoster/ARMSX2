@@ -83,7 +83,7 @@ fun AppNavigation() {
             label = "app-route",
         ) { destination ->
             when (destination) {
-                AppRoute.Home -> HomeScreen(
+                AppRoute.Home -> if (com.armsx2.BuzzEdition.ENABLED) com.armsx2.ui.buzz.BuzzHome() else HomeScreen(
                     onOpenMenu = { UiNavigator.drawerOpen.value = true },
                     onOpenGameSettings = { UiNavigator.navigate(AppRoute.Settings(game = it)) },
                 )

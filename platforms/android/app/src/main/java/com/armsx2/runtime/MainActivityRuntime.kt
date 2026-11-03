@@ -2371,6 +2371,8 @@ open class MainActivityRuntime : ComponentActivity() {
             // Lightgun: read the pref and re-assert the USB device type. The ini is
             // authoritative, but this covers a first run that has no USB section yet.
             runCatching {
+                // Buzz Controller: the buzzers are always on port 1, before the core reads it.
+                com.armsx2.BuzzEdition.applyPrefs()
                 com.armsx2.input.UsbDevices.load()
                 com.armsx2.input.Lightgun.load()
                 com.armsx2.input.UsbDevices.applyAtBoot()
@@ -2914,7 +2916,8 @@ open class MainActivityRuntime : ComponentActivity() {
             // setupComplete the main emulator UI takes over. Re-entering
             // setup requires clearing app data (or wiping the prefs key).
             if (!setupComplete.value || setupEditorVisible.value) {
-                com.armsx2.ui.onboarding.OnboardingScreen()
+                if (com.armsx2.BuzzEdition.ENABLED) com.armsx2.ui.buzz.BuzzSetupScreen()
+                else com.armsx2.ui.onboarding.OnboardingScreen()
             } else if (setupComplete.value) {
                 // The chosen data folder could not be reached at startup (see waitForDataRoot).
                 // Back / Retry is the default: falling back is the choice that has to be made on

@@ -392,6 +392,78 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /**
+     * Buzz Controller's whole setup: one folder that holds the BIOS and the games. Finds a BIOS in
+     * it or up to three folders down, makes the folder (and its subfolders) the game library, and
+     * finishes setup. Only files of a BIOS's size are probed, so game discs are never read.
+     */
+    fun quickSetup(treeUri: Uri) {
+        state.value = state.value.copy(busy = true, error = null)
+        val context = getApplication<Application>()
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        viewModelScope.launch {
+            val found = withContext(Dispatchers.IO) {
+                DocumentFile.fromTreeUri(context, treeUri)?.let { findBios(context, it, 0) }
+            }
+            if (found == null) {
+                state.value = state.value.copy(
+                    busy = false,
+                    error = "No PS2 BIOS was found in that folder. Put your BIOS file in it, or in a folder inside it, and choose it again.",
+                )
+                return@launch
+            }
+            val (target, info) = found
+            selectBios(context, target)
+            val folder = treeUri.toString()
+            MainActivityRuntime.setRomsDirs(listOf(folder))
+            MainActivityRuntime.setRomsDirSubfolders(folder, true)
+            state.value = state.value.copy(
+                biosName = target.name,
+                biosInfo = info,
+                biosCount = 1,
+                selectedBiosPath = target.absolutePath,
+                gameFolders = listOf(folder),
+                busy = false,
+            )
+            finish()
+        }
+    }
+
+    /** Point the library at a different folder (Buzz Controller settings). */
+    fun changeGameFolder(treeUri: Uri) {
+        val context = getApplication<Application>()
+        runCatching {
+            context.contentResolver.takePersistableUriPermission(
+                treeUri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
+            )
+        }
+        val folder = treeUri.toString()
+        MainActivityRuntime.setRomsDirs(listOf(folder))
+        MainActivityRuntime.setRomsDirSubfolders(folder, true)
+        com.armsx2.data.library.LibraryRefresh.request()
+    }
+
+    private fun findBios(context: Context, dir: DocumentFile, depth: Int): Pair<File, BiosInfo>? {
+        val children = runCatching { dir.listFiles().toList() }.getOrDefault(emptyList())
+        // BIOS images are 4 MB (a few are 8); anything far off that is not one.
+        for (child in children) {
+            if (!child.isFile) continue
+            val size = runCatching { child.length() }.getOrDefault(0L)
+            if (size in 1_000_000L..16_000_000L) importBiosFile(context, child.uri)?.let { return it }
+        }
+        if (depth >= 3) return null
+        for (child in children) {
+            if (child.isDirectory) findBios(context, child, depth + 1)?.let { return it }
+        }
+        return null
+    }
+
     fun dismissError() {
         state.value = state.value.copy(error = null)
     }

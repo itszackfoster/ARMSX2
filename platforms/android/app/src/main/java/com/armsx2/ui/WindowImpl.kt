@@ -147,7 +147,8 @@ object WindowImpl {
             }
 
             if (overlayVisible.value) {
-                com.armsx2.ui.emulation.EmulationMenuScreen()
+                if (com.armsx2.BuzzEdition.ENABLED) com.armsx2.ui.buzz.BuzzPauseMenu()
+                else com.armsx2.ui.emulation.EmulationMenuScreen()
             }
 
             // Full manager screen over the paused game; dismiss (back or the screen's
