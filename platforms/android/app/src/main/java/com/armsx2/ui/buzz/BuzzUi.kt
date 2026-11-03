@@ -23,6 +23,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.armsx2.ui.settings.controllerFocusable
 
 /** The Buzz Launcher look: a dark ground, one yellow action colour, and the buzzer red. */
 internal object BuzzColors {
@@ -51,11 +52,33 @@ internal fun BuzzWordmark(size: TextUnit, dot: Dp) {
     }
 }
 
-/** The one primary action on a screen: a yellow pill. */
+/**
+ * Controller hooks for the Buzz screens. Every control registers with ARMSX2's controller
+ * registry (Modifier.controllerFocusable), which the Thor's D-pad, sticks and A already drive.
+ * [back] is what B does on top of that: set while a sub-screen (Settings) is open.
+ */
+object BuzzNav {
+    @Volatile var back: (() -> Unit)? = null
+
+    /** B on a Buzz screen: close the sub-screen if one is open. True when it was handled. */
+    fun handleBack(): Boolean {
+        val b = back ?: return false
+        b()
+        return true
+    }
+}
+
+/** The one primary action on a screen: a yellow pill. [navId] puts it in the controller order. */
 @Composable
-internal fun BuzzPrimaryButton(label: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+internal fun BuzzPrimaryButton(
+    label: String,
+    modifier: Modifier = Modifier,
+    navId: String? = null,
+    onClick: () -> Unit,
+) {
     Box(
         modifier
+            .controllerFocusable(navId, RoundedCornerShape(50), onConfirm = onClick)
             .heightIn(min = 64.dp)
             .clip(RoundedCornerShape(50))
             .background(BuzzColors.Yellow)
@@ -73,11 +96,13 @@ internal fun BuzzSecondaryButton(
     label: String,
     modifier: Modifier = Modifier,
     outlined: Boolean = false,
+    navId: String? = null,
     onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(16.dp)
     Box(
         modifier
+            .controllerFocusable(navId, shape, onConfirm = onClick)
             .heightIn(min = 56.dp)
             .clip(shape)
             .then(

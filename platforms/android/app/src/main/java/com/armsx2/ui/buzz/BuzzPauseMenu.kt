@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +34,10 @@ import com.armsx2.ui.InGameOverlay
 fun BuzzPauseMenu() {
     val resume = { InGameOverlay.toggle() }
     BackHandler(onBack = resume)
+    // Open on Resume, so A straight away carries on playing.
+    LaunchedEffect(Unit) {
+        com.armsx2.ui.settings.SettingsControllerNav.focusWhenRegistered(null, "buzz.pause.resume")
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -50,22 +55,22 @@ fun BuzzPauseMenu() {
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             )
-            BuzzPrimaryButton("Resume", Modifier.fillMaxWidth(), onClick = resume)
+            BuzzPrimaryButton("Resume", Modifier.fillMaxWidth(), navId = "buzz.pause.resume", onClick = resume)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                BuzzSecondaryButton("Save", Modifier.weight(1f)) {
+                BuzzSecondaryButton("Save", Modifier.weight(1f), navId = "buzz.pause.save") {
                     MainActivityRuntime.instance?.saveState()
                     resume()
                 }
-                BuzzSecondaryButton("Load", Modifier.weight(1f)) {
+                BuzzSecondaryButton("Load", Modifier.weight(1f), navId = "buzz.pause.load") {
                     // Resumes once the state has actually loaded.
                     MainActivityRuntime.instance?.loadState { resume() }
                 }
             }
-            BuzzSecondaryButton("Restart game", Modifier.fillMaxWidth()) {
+            BuzzSecondaryButton("Restart game", Modifier.fillMaxWidth(), navId = "buzz.pause.restart") {
                 // Stopping hides this menu (MainActivityRuntime.stop), as the stock menu relies on.
                 MainActivityRuntime.restart()
             }
-            BuzzSecondaryButton("Quit to games", Modifier.fillMaxWidth(), outlined = true) {
+            BuzzSecondaryButton("Quit to games", Modifier.fillMaxWidth(), outlined = true, navId = "buzz.pause.quit") {
                 MainActivityRuntime.closeGame()
             }
         }

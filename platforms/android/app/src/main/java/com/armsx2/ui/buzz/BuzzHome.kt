@@ -23,9 +23,14 @@ import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Dp
+import com.armsx2.ui.settings.SettingsControllerNav
+import com.armsx2.ui.settings.controllerFocusable
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -56,7 +61,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import com.armsx2.BuzzDisplay
 import com.armsx2.BuzzEdition
+import androidx.compose.foundation.verticalScroll
 import com.armsx2.CustomCovers
 import com.armsx2.GameInfo
 import com.armsx2.navigation.AppRoute
@@ -120,13 +127,14 @@ fun BuzzHome(viewModel: HomeViewModel = viewModel()) {
                         textAlign = TextAlign.Center,
                         modifier = Modifier.widthIn(max = 520.dp),
                     )
-                    BuzzSecondaryButton("Open settings") { showSettings = true }
+                    BuzzSecondaryButton("Open settings", navId = "buzz.opensettings") { showSettings = true }
                 }
             }
         }
         if (games.isNotEmpty()) {
+            val players = BuzzEdition.players.intValue
             Text(
-                "Tap a game to play",
+                "Tap or press A to play  ·  $players ${if (players == 1) "player" else "players"} (L1 / R1 to change)",
                 color = BuzzColors.Dim,
                 fontSize = 15.sp,
                 textAlign = TextAlign.Center,
@@ -140,6 +148,10 @@ fun BuzzHome(viewModel: HomeViewModel = viewModel()) {
  * One row of game tiles that scrolls sideways, four to a screen. When there are more than fit, the
  * edges fade with a small arrow on the side there is more, and a slim track under the row shows
  * where in the list you are. Neither shows when every game fits.
+ *
+ * A plain scrolling Row rather than a LazyRow on purpose: the controller moves between tiles by
+ * their on-screen positions, so every tile has to exist, including the ones scrolled out of view.
+ * A library of Buzz! games is a handful of tiles, so composing them all costs nothing.
  */
 @Composable
 private fun GameShelf(
@@ -147,35 +159,35 @@ private fun GameShelf(
     customCovers: Map<String, java.io.File>,
     onPlay: (GameInfo) -> Unit,
 ) {
-    val listState = rememberLazyListState()
+    val scroll = rememberScrollState()
     val gap = 20.dp
+    // Start on the first game, so A plays it straight away on a controller.
+    LaunchedEffect(Unit) { SettingsControllerNav.focusWhenRegistered(null, "buzz.game.0") }
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        val trackSpace = 18.dp
         val tileWidth = (maxWidth - gap * 3) / 4
+        val viewport = maxWidth
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                LazyRow(
-                    state = listState,
+                Row(
+                    Modifier.fillMaxSize().horizontalScroll(scroll),
                     horizontalArrangement = Arrangement.spacedBy(gap),
-                    modifier = Modifier.fillMaxSize(),
                 ) {
-                    items(games, key = { it.uri.toString() }) { game ->
+                    games.forEachIndexed { index, game ->
                         GameTile(
                             game,
                             CustomCovers.matchIn(customCovers, game),
                             Modifier.width(tileWidth).fillMaxHeight(),
+                            navId = "buzz.game.$index",
                         ) { onPlay(game) }
                     }
                 }
-                val back = listState.canScrollBackward
-                val forward = listState.canScrollForward
-                if (back) EdgeHint(Alignment.CenterStart, pointsRight = false)
-                if (forward) EdgeHint(Alignment.CenterEnd, pointsRight = true)
+                if (scroll.value > 0) EdgeHint(Alignment.CenterStart, pointsRight = false)
+                if (scroll.value < scroll.maxValue) EdgeHint(Alignment.CenterEnd, pointsRight = true)
             }
-            if (listState.canScrollBackward || listState.canScrollForward) {
-                Spacer(Modifier.height(trackSpace - 4.dp))
+            if (scroll.maxValue > 0) {
+                Spacer(Modifier.height(14.dp))
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    ScrollTrack(listState, games.size)
+                    ScrollTrack(scroll, viewport)
                 }
             }
         }
@@ -203,15 +215,15 @@ private fun BoxScope.EdgeHint(alignment: Alignment, pointsRight: Boolean) {
     }
 }
 
-/** A slim track with a thumb showing which part of the list is on screen. */
+/** A slim track with a thumb showing which part of the row is on screen. */
 @Composable
-private fun ScrollTrack(listState: androidx.compose.foundation.lazy.LazyListState, total: Int) {
-    val info = listState.layoutInfo
-    val visibleCount = info.visibleItemsInfo.size.coerceAtLeast(1)
-    val first = listState.firstVisibleItemIndex
-    val thumbFraction = (visibleCount.toFloat() / total).coerceIn(0.1f, 1f)
-    val maxStart = (total - visibleCount).coerceAtLeast(1)
-    val startFraction = (first.toFloat() / maxStart).coerceIn(0f, 1f) * (1f - thumbFraction)
+private fun ScrollTrack(scroll: ScrollState, viewport: Dp) {
+    val density = LocalDensity.current
+    val viewportPx = with(density) { viewport.toPx() }
+    val contentPx = viewportPx + scroll.maxValue
+    val thumbFraction = (viewportPx / contentPx).coerceIn(0.1f, 1f)
+    val startFraction = if (scroll.maxValue > 0)
+        scroll.value.toFloat() / scroll.maxValue * (1f - thumbFraction) else 0f
     BoxWithConstraints(
         Modifier
             .fillMaxWidth(0.3f)
@@ -240,10 +252,17 @@ private fun CenterMessage(content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun GameTile(game: GameInfo, customCover: java.io.File?, modifier: Modifier, onClick: () -> Unit) {
+private fun GameTile(
+    game: GameInfo,
+    customCover: java.io.File?,
+    modifier: Modifier,
+    navId: String,
+    onClick: () -> Unit,
+) {
     val title = game.displayTitle(false)
     Column(
         modifier
+            .controllerFocusable(navId, RoundedCornerShape(18.dp), onConfirm = onClick)
             .clip(RoundedCornerShape(18.dp))
             .background(BuzzColors.Surface)
             .clickable(role = Role.Button, onClick = onClick)
@@ -283,6 +302,7 @@ private fun GameTile(game: GameInfo, customCover: java.io.File?, modifier: Modif
 private fun GearButton(onClick: () -> Unit) {
     Box(
         Modifier
+            .controllerFocusable("buzz.gear", RoundedCornerShape(50), onConfirm = onClick)
             .size(48.dp)
             .clip(CircleShape)
             .background(BuzzColors.Surface)
@@ -301,18 +321,61 @@ private fun GearButton(onClick: () -> Unit) {
 @Composable
 private fun BuzzSettings(onBack: () -> Unit, setup: OnboardingViewModel = viewModel()) {
     BackHandler(onBack = onBack)
+    // B on a controller closes this screen (MainActivityRuntime asks BuzzNav first).
+    DisposableEffect(onBack) {
+        BuzzNav.back = onBack
+        onDispose { if (BuzzNav.back === onBack) BuzzNav.back = null }
+    }
+    LaunchedEffect(Unit) { SettingsControllerNav.focusWhenRegistered(null, "buzz.settings.phones") }
     val folder = MainActivityRuntime.romsDirs.value.firstOrNull()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(setup::changeGameFolder)
     }
     val phones = BuzzEdition.phonesEnabled.value
+    val context = LocalContext.current
+    var resolution by remember { mutableStateOf(BuzzDisplay.resolutionIndex()) }
+    var aspect by remember { mutableStateOf(BuzzDisplay.aspectIndex()) }
+    // Whether a TV is connected, kept current as one is plugged in or out.
+    var tvName by remember { mutableStateOf(BuzzDisplay.tvName(context)) }
+    var onTv by remember { mutableStateOf(BuzzDisplay.buzzersOnTv(context)) }
+    DisposableEffect(Unit) {
+        val dm = context.getSystemService(android.content.Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager
+        val listener = object : android.hardware.display.DisplayManager.DisplayListener {
+            override fun onDisplayAdded(displayId: Int) = update()
+            override fun onDisplayRemoved(displayId: Int) = update()
+            override fun onDisplayChanged(displayId: Int) = Unit
+            fun update() {
+                tvName = BuzzDisplay.tvName(context)
+                onTv = BuzzDisplay.buzzersOnTv(context)
+            }
+        }
+        dm.registerDisplayListener(listener, android.os.Handler(android.os.Looper.getMainLooper()))
+        onDispose { dm.unregisterDisplayListener(listener) }
+    }
+    fun stepResolution(delta: Int) {
+        resolution = (resolution + delta).mod(BuzzDisplay.resolutions.size)
+        BuzzDisplay.setResolution(resolution)
+    }
+    fun stepAspect(delta: Int) {
+        aspect = (aspect + delta).mod(BuzzDisplay.aspects.size)
+        BuzzDisplay.setAspect(aspect)
+    }
+    fun toggleScreen() {
+        onTv = !onTv
+        BuzzDisplay.setBuzzersOnTv(context, onTv)
+    }
     Column(
-        Modifier.fillMaxSize().background(BuzzColors.Ground).padding(horizontal = 40.dp, vertical = 28.dp),
+        Modifier
+            .fillMaxSize()
+            .background(BuzzColors.Ground)
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 40.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Box(
                 Modifier
+                    .controllerFocusable("buzz.settings.back", RoundedCornerShape(50), onConfirm = onBack)
                     .size(48.dp)
                     .clip(CircleShape)
                     .background(BuzzColors.Surface)
@@ -326,6 +389,7 @@ private fun BuzzSettings(onBack: () -> Unit, setup: OnboardingViewModel = viewMo
             SettingsRow(
                 title = "Phone buzzers",
                 detail = "Let phones on the same Wi-Fi join as players",
+                navId = "buzz.settings.phones",
                 onClick = { BuzzEdition.setPhonesEnabled(!phones) },
             ) {
                 Switch(
@@ -340,15 +404,64 @@ private fun BuzzSettings(onBack: () -> Unit, setup: OnboardingViewModel = viewMo
             SettingsRow(
                 title = "Games folder",
                 detail = folder?.let(::folderName) ?: "Not chosen",
+                navId = "buzz.settings.folder",
                 onClick = { picker.launch(null) },
             ) { Text("Change", color = BuzzColors.Yellow, fontSize = 16.sp, fontWeight = FontWeight.Bold) }
             SettingsRow(
                 title = "Emulator settings",
                 detail = "Graphics, performance and fixes, for troubleshooting only",
+                navId = "buzz.settings.emulator",
                 onClick = { UiNavigator.navigate(AppRoute.Settings()) },
             ) { Text("›", color = BuzzColors.Dim, fontSize = 26.sp) }
         }
-        Text("Player count lives on the bottom screen", color = BuzzColors.Dim, fontSize = 13.sp)
+        SectionLabel("Picture")
+        Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SettingsRow(
+                title = "Resolution",
+                detail = "Higher is sharper, especially on a TV. Takes effect when a game starts.",
+                navId = "buzz.settings.resolution",
+                onClick = { stepResolution(1) },
+                onLeft = { stepResolution(-1) },
+                onRight = { stepResolution(1) },
+            ) { Stepper(BuzzDisplay.resolutions[resolution].second) }
+            SettingsRow(
+                title = "Picture shape",
+                detail = "Buzz! is made for 4:3. Widescreen or stretch fill a TV.",
+                navId = "buzz.settings.aspect",
+                onClick = { stepAspect(1) },
+                onLeft = { stepAspect(-1) },
+                onRight = { stepAspect(1) },
+            ) { Stepper(BuzzDisplay.aspects[aspect].second) }
+        }
+        tvName?.let { name ->
+            SectionLabel("TV connected")
+            Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingsRow(
+                    title = "Buzzers show on",
+                    detail = "Put the buzzers on the Thor for players, or on $name so everyone can watch them",
+                    navId = "buzz.settings.tvbuzzers",
+                    onClick = { toggleScreen() },
+                    onLeft = { toggleScreen() },
+                    onRight = { toggleScreen() },
+                ) { Stepper(if (onTv) "TV" else "Thor bottom screen") }
+            }
+        }
+        Text("Choose how many players on the bottom screen, or with L1 / R1 on the games screen", color = BuzzColors.Dim, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun SectionLabel(text: String) {
+    Text(text, color = BuzzColors.Dim, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp))
+}
+
+/** A value you step through: tap or A for the next, Left / Right on a controller. */
+@Composable
+private fun Stepper(value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text("‹", color = BuzzColors.Dim, fontSize = 22.sp)
+        Text(value, color = BuzzColors.Yellow, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("›", color = BuzzColors.Dim, fontSize = 22.sp)
     }
 }
 
@@ -356,11 +469,15 @@ private fun BuzzSettings(onBack: () -> Unit, setup: OnboardingViewModel = viewMo
 private fun SettingsRow(
     title: String,
     detail: String,
+    navId: String,
     onClick: () -> Unit,
+    onLeft: (() -> Unit)? = null,
+    onRight: (() -> Unit)? = null,
     trailing: @Composable () -> Unit,
 ) {
     Row(
         Modifier
+            .controllerFocusable(navId, RoundedCornerShape(16.dp), onConfirm = onClick, onLeft = onLeft, onRight = onRight)
             .fillMaxWidth()
             .heightIn(min = 72.dp)
             .clip(RoundedCornerShape(16.dp))
@@ -371,7 +488,7 @@ private fun SettingsRow(
     ) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text(title, color = BuzzColors.Text, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Text(detail, color = BuzzColors.Dim, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(detail, color = BuzzColors.Dim, fontSize = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         trailing()
     }

@@ -340,6 +340,21 @@ object SecondScreen {
         MainActivityRuntime.instance?.let { refresh(it.applicationContext) }
     }
 
+    /** Add [name] to the opt-outs without re-picking a display; for a caller about to pick. */
+    fun ignoreQuietly(name: String) {
+        if (name.isBlank() || name in ignoredDisplays.value) return
+        ignoredDisplays.value = ignoredDisplays.value + name
+        persistIgnored()
+    }
+
+    /** Let the panel use [name] again (Buzz Launcher's "buzzers on" choice). */
+    fun allowDisplay(name: String) {
+        if (name !in ignoredDisplays.value) return
+        ignoredDisplays.value = ignoredDisplays.value - name
+        persistIgnored()
+        MainActivityRuntime.instance?.let { refresh(it.applicationContext) }
+    }
+
     /** Forget every opt-out, so the panel can use any second display again. */
     fun clearIgnoredDisplays() {
         ignoredDisplays.value = emptySet()
@@ -367,6 +382,8 @@ object SecondScreen {
 
     private fun refresh(context: Context) {
         if (!enabled.value || !foreground) { detach(); return }
+        // Buzz Launcher: a TV just connected keeps the buzzers on the Thor unless told otherwise.
+        if (BuzzEdition.ENABLED) runCatching { BuzzDisplay.onDisplaysChanged(context) }
         val target = secondaryDisplay(context)
         if (target == null) { detach(); return }
         // Already showing on this display? Leave it alone.

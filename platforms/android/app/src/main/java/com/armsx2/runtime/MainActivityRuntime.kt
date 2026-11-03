@@ -3553,6 +3553,19 @@ open class MainActivityRuntime : ComponentActivity() {
         // live here). The hook is non-null ONLY while the settings screen is composed, so
         // in-game L1/R1 still goes to the pad untouched. Placed after the capture blocks so
         // binding a shoulder button still works.
+        // Buzz Launcher games screen: L1 / R1 change how many players are in the game.
+        if (com.armsx2.BuzzEdition.ENABLED &&
+            (kc == KeyEvent.KEYCODE_BUTTON_L1 || kc == KeyEvent.KEYCODE_BUTTON_R1) &&
+            eState.value == EmuState.STOPPED &&
+            com.armsx2.navigation.UiNavigator.route.value == com.armsx2.navigation.AppRoute.Home &&
+            com.armsx2.ui.buzz.BuzzNav.back == null
+        ) {
+            if (event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0) {
+                val step = if (kc == KeyEvent.KEYCODE_BUTTON_L1) -1 else 1
+                com.armsx2.BuzzPad.setPlayerCount(com.armsx2.BuzzPad.playerCount() + step)
+            }
+            return true
+        }
         if (kc == KeyEvent.KEYCODE_BUTTON_L1 || kc == KeyEvent.KEYCODE_BUTTON_R1) {
             val cycleTab = com.armsx2.ui.settingshub.SettingsCategoryNav.cycle
             if (cycleTab != null) {
@@ -3705,6 +3718,25 @@ open class MainActivityRuntime : ComponentActivity() {
                 // Swallow the rest: nothing behind this screen may act on a stray button.
                 else -> return true
             }
+        }
+        if (WindowImpl.overlayVisible.value && com.armsx2.BuzzEdition.ENABLED) {
+            // Buzz Launcher's pause menu is one column of buttons on the controller registry.
+            val nav = com.armsx2.ui.settings.SettingsControllerNav
+            val down = event.action == KeyEvent.ACTION_DOWN && event.repeatCount == 0
+            val handled = when (kc) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> { if (down) nav.moveSpatial(-1, 0); true }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> { if (down) nav.moveSpatial(1, 0); true }
+                KeyEvent.KEYCODE_DPAD_UP -> { if (down) nav.moveSpatial(0, -1); true }
+                KeyEvent.KEYCODE_DPAD_DOWN -> { if (down) nav.moveSpatial(0, 1); true }
+                KeyEvent.KEYCODE_BUTTON_A,
+                KeyEvent.KEYCODE_DPAD_CENTER,
+                KeyEvent.KEYCODE_ENTER,
+                KeyEvent.KEYCODE_NUMPAD_ENTER -> { if (down) nav.confirm(); true }
+                KeyEvent.KEYCODE_BUTTON_B,
+                KeyEvent.KEYCODE_BACK -> { if (down) com.armsx2.ui.InGameOverlay.toggle(); true }
+                else -> false
+            }
+            if (handled) return true
         }
         if (WindowImpl.overlayVisible.value) {
             // Pause menu two-zone nav (EmulationMenuInputController): the left tab
@@ -5055,6 +5087,15 @@ open class MainActivityRuntime : ComponentActivity() {
         com.armsx2.MenuSfx.play(com.armsx2.MenuSfx.Event.BACK)
         val nav = com.armsx2.navigation.UiNavigator
         val onHome = nav.route.value == com.armsx2.navigation.AppRoute.Home
+        // Buzz Launcher: B closes its own sub-screens, and never opens ARMSX2's drawer.
+        if (com.armsx2.BuzzEdition.ENABLED) {
+            when {
+                com.armsx2.ui.buzz.BuzzNav.handleBack() -> {}
+                WindowImpl.inGameScreen.value != null -> WindowImpl.dismissInGameScreen()
+                !onHome -> nav.back()
+            }
+            return
+        }
         when {
             nav.drawerOpen.value -> nav.drawerOpen.value = false
             WindowImpl.inGameScreen.value != null -> WindowImpl.dismissInGameScreen()
@@ -5135,6 +5176,9 @@ open class MainActivityRuntime : ComponentActivity() {
                 // Rides the shared hold-repeat, so a held direction walks the list and
                 // sweeps a value.
                 com.armsx2.ui.common.ShaderParamsEditor.move(dx, dy)
+            }
+            WindowImpl.overlayVisible.value && com.armsx2.BuzzEdition.ENABLED -> {
+                com.armsx2.ui.settings.SettingsControllerNav.moveSpatial(dx, dy)
             }
             WindowImpl.overlayVisible.value -> {
                 // Pause menu — two-zone controller handles both the tab column and

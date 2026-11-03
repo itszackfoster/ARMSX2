@@ -104,6 +104,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             // Players 5-8 need the second set of buzzers; plug it in only when they are used, so a
             // game for up to four never sees a set it was not expecting. USB devices are checked
             // when a game boots, which is why this is chosen in the lobby.
+            BuzzEdition.players.intValue = n
             val second = if (n > PER_SET) DEVICE_TYPE else UsbDevices.NONE
             if (UsbDevices.storedType(1) != second) runCatching { UsbDevices.setType(1, second) }
             SecondScreen.rebuild()

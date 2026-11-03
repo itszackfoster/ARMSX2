@@ -33,7 +33,11 @@ import com.armsx2.ui.onboarding.OnboardingViewModel
 fun BuzzSetupScreen(viewModel: OnboardingViewModel = viewModel()) {
     val context = LocalContext.current
     val state = viewModel.state.value
-    LaunchedEffect(Unit) { BuzzEdition.applyUi(context) }
+    LaunchedEffect(Unit) {
+        BuzzEdition.applyUi(context)
+        // Have the one button selected, so A works straight away on a controller.
+        com.armsx2.ui.settings.SettingsControllerNav.focusWhenRegistered(null, "buzz.setup.choose")
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(viewModel::quickSetup)
     }
@@ -58,7 +62,7 @@ fun BuzzSetupScreen(viewModel: OnboardingViewModel = viewModel()) {
                 CircularProgressIndicator(color = BuzzColors.Yellow, modifier = Modifier.size(48.dp))
                 Text("Looking for your BIOS and games…", color = BuzzColors.Text, fontSize = 18.sp)
             } else {
-                BuzzPrimaryButton("Choose folder") { picker.launch(null) }
+                BuzzPrimaryButton("Choose folder", navId = "buzz.setup.choose") { picker.launch(null) }
             }
             state.error?.let {
                 Text(
