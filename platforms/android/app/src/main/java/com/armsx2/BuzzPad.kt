@@ -15,7 +15,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.DecelerateInterpolator
 import com.armsx2.input.UsbDevices
-import kr.co.iefriends.pcsx2.NativeApp
 
 /**
  * Buzz! buzzers on the second screen (Ayn Thor bottom panel and similar).
@@ -525,7 +524,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
 
     private fun send(bind: Int, pressed: Boolean) {
         if (usbPort !in 0..1) return
-        runCatching { NativeApp.usbLightgunButton(usbPort, bind, pressed) }
+        BuzzInput.set(usbPort, bind, pressed)
     }
 
     // ---- Reveal / force ----------------------------------------------------------------------------

@@ -3,7 +3,6 @@ package com.armsx2
 import android.os.Handler
 import android.os.Looper
 import android.util.Base64
-import kr.co.iefriends.pcsx2.NativeApp
 import java.io.BufferedInputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -265,7 +264,7 @@ object BuzzPhones {
     private fun press(slot: Int, button: Int, down: Boolean) {
         val port = BuzzPad.buzzPort()
         if (port < 0) return
-        runCatching { NativeApp.usbLightgunButton(port, BuzzPad.bindId(slot, button), down) }
+        BuzzInput.set(port, BuzzPad.bindId(slot, button), down)
     }
 
     private fun disconnect(c: Client) {

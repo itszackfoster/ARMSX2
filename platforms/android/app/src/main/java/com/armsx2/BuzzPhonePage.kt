@@ -21,7 +21,7 @@ object BuzzPhonePage {
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>Buzz! buzzer</title>
 <style>
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+*{box-sizing:border-box;touch-action:none;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 html,body{margin:0;height:100%;background:#0b0d12;color:#e6eaf0;font-family:system-ui,-apple-system,sans-serif;overflow:hidden;touch-action:none;overscroll-behavior:none}
 #app{position:fixed;inset:0;display:flex;flex-direction:column;padding:max(14px,env(safe-area-inset-top)) 14px max(14px,env(safe-area-inset-bottom))}
 #who{text-align:center;font-weight:700;letter-spacing:1px;font-size:20px;padding:4px 0 12px}
@@ -83,6 +83,11 @@ stage.addEventListener('pointerdown',down);
 window.addEventListener('pointerup',up);
 window.addEventListener('pointercancel',up);
 document.addEventListener('contextmenu',function(e){e.preventDefault()});
+// Phone browsers hold back a quick second tap to see if it is a double-tap zoom, and iPhone
+// Safari zooms on it whatever the viewport says. Cancelling the raw touch and gesture events stops
+// both, so every tap goes straight through as a press. Pointer events still fire.
+['touchstart','touchmove','touchend'].forEach(function(t){document.addEventListener(t,function(e){e.preventDefault()},{passive:false})});
+['gesturestart','gesturechange','gestureend','dblclick'].forEach(function(t){document.addEventListener(t,function(e){e.preventDefault()},{passive:false})});
 document.addEventListener('visibilitychange',function(){if(document.hidden){for(var id in held){send('u'+held[id].getAttribute('data-b'))}releaseAll()}});
 connect();
 })();
