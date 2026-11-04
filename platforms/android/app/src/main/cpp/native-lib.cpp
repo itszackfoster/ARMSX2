@@ -2861,6 +2861,18 @@ Java_kr_co_iefriends_pcsx2_NativeApp_usbLightgunAim(JNIEnv*, jclass, jfloat x, j
     InputManager::UpdatePointerAbsolutePosition(0, x * width, y * height);
 }
 
+// Buzz Launcher: which buzzers' red lights the game has on, for Buzz devices on USB [port].
+// Bit n = buzzer n+1. Polled by the frontend to flash the on-screen and phone buzzers.
+namespace usb_pad { u8 BuzzLights(u32 port); }
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_kr_co_iefriends_pcsx2_NativeApp_buzzLights(JNIEnv*, jclass, jint port) {
+    if (port < 0 || port > 1)
+        return 0;
+    return static_cast<jint>(usb_pad::BuzzLights(static_cast<u32>(port)));
+}
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_kr_co_iefriends_pcsx2_NativeApp_usbLightgunButton(JNIEnv*, jclass, jint port, jint bind,

@@ -11,6 +11,8 @@ package com.armsx2
  * token the Thor gave it; the seat is held for a minute. Being moved to the Thor or removed ends
  * the session with a message and a "Join again" button.
  *
+ * The game's buzzer lights arrive as "light" messages and light the dome, as on a real buzzer.
+ *
  * Messages to the Thor: "d<n>" / "u<n>" press and release button n (0 red, 1 blue, 2 orange,
  * 3 green, 4 yellow); JSON for join, rejoin and pong.
  *
@@ -57,6 +59,9 @@ input:focus{outline:none;border-color:#f4d21f}
 .dome{border-radius:50%;background:#2a2f3a;display:flex;align-items:center;justify-content:center;aspect-ratio:1;height:min(100%,62vw);position:relative}
 .dome i{display:block;width:84%;height:84%;border-radius:50%;background:#e0201e;transition:transform .06s}
 .dome.p i{transform:scale(.92);background:#9d1615}
+.dome.lit{background:#4a2a2a;box-shadow:0 0 36px 10px #ff3b2f88}
+.dome.lit i{background:#ff5a47;box-shadow:inset 0 0 0 999px #ffe1dc22}
+.dome.lit.p i{background:#c22a1d}
 #ring{position:absolute;inset:-14px;border-radius:50%;border:6px solid #e0201e66;display:none}
 #tag{position:absolute;bottom:-8px;padding:6px 16px;border-radius:999px;background:#e6eaf0;color:#0b0d12;font-size:14px;font-weight:900;display:none}
 .buzzed #ring,.buzzed #tag{display:block}
@@ -80,7 +85,7 @@ input:focus{outline:none;border-color:#f4d21f}
  <input id="name" maxlength="16" autocomplete="nickname" placeholder="Sam">
  <label>Seat</label>
  <div class="seats" id="seats"></div>
- <p class="hint" id="seathint">Greyed seats are taken.</p>
+ <p class="hint" id="seathint">Any free seat works, 1 to 4 included. Greyed seats are taken.</p>
  <button class="go" id="go" disabled>Join</button>
 </div>
 
@@ -126,7 +131,7 @@ function renderJoin(){
   box.appendChild(b);
  });
  var thorPick=seat&&seats[seat-1]==='thor';
- el('seathint').textContent=thorPick?'Seat '+seat+' is on the Thor now. Taking it moves that player to your phone.':'Greyed seats are taken.';
+ el('seathint').textContent=thorPick?'Seat '+seat+' is on the Thor now. Taking it moves that player to your phone.':'Any free seat works, 1 to 4 included. Greyed seats are taken.';
  var ok=seat>0&&nameIn.value.trim().length>0;
  el('go').disabled=!ok;
  el('go').textContent=seat?'Join as Player '+seat:'Every seat is taken';
@@ -174,6 +179,7 @@ function connect(){
   }
   else if(m.t==='ping'){send(JSON.stringify({t:'pong',k:m.k}))}
   else if(m.t==='sig'){sig(m.q)}
+  else if(m.t==='light'){document.querySelector('#bz .dome').classList.toggle('lit',!!m.on)}
   else if(m.t==='full'){end('Game full','Every seat is taken. Ask for more players on the Thor, then join again.')}
   else if(m.t==='kicked'){
    store(TOKEN_KEY,null);

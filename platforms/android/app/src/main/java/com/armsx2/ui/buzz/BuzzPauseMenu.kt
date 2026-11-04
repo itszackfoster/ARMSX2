@@ -151,7 +151,7 @@ private fun PlayersPanel() {
                         )
                         val weak = seat != null && (!seat.connected || seat.quality == BuzzPhones.Quality.WEAK)
                         Text(
-                            seat?.where ?: if (onThor) "Thor screen" else "Free seat",
+                            seat?.where ?: if (onThor) "Thor screen or phone" else "Free seat",
                             color = if (weak) Color(0xFFFFB37A) else BuzzColors.Dim,
                             fontSize = 12.sp,
                         )
@@ -174,7 +174,8 @@ private fun PlayersPanel() {
                 if (qr != null) Image(qr, contentDescription = "Join code", modifier = Modifier.fillMaxSize())
             }
             Text(
-                if (url != null) "Someone arriving late? Scan to take a free seat." else "Connect the Thor to Wi-Fi to let phones join.",
+                if (url != null) "Anyone can switch to a phone, or a latecomer can join. Scan, or go to ${com.armsx2.BuzzMdns.ADDRESS}."
+                else "Connect the Thor to Wi-Fi to let phones join.",
                 color = BuzzColors.Dim,
                 fontSize = 14.sp,
                 lineHeight = 19.sp,

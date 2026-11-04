@@ -264,7 +264,7 @@ private fun JoinCodeOverlay(onClose: () -> Unit) {
                     Image(qr, contentDescription = "Join code", modifier = Modifier.size(260.dp))
                 }
                 Text("Scan to join as a buzzer", color = BuzzColors.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Text("$url  ·  same Wi-Fi as the Thor", color = BuzzColors.Dim, fontSize = 16.sp)
+                Text("or go to ${com.armsx2.BuzzMdns.ADDRESS}  ·  same Wi-Fi as the Thor", color = BuzzColors.Dim, fontSize = 16.sp)
             } else {
                 Text("No Wi-Fi connection", color = BuzzColors.Text, fontSize = 22.sp, fontWeight = FontWeight.Bold)
                 Text("Connect the Thor to Wi-Fi, or turn on its hotspot.", color = BuzzColors.Dim, fontSize = 16.sp)
@@ -575,7 +575,7 @@ private fun BuzzSettings(onBack: () -> Unit, setup: OnboardingViewModel = viewMo
         Column(Modifier.widthIn(max = 720.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SettingsRow(
                 title = "Phone buzzers",
-                detail = "Let phones on the same Wi-Fi join as players",
+                detail = "Let phones on the same Wi-Fi join as any player",
                 navId = "buzz.settings.phones",
                 onClick = { BuzzEdition.setPhonesEnabled(!phones) },
             ) {
@@ -587,6 +587,32 @@ private fun BuzzSettings(onBack: () -> Unit, setup: OnboardingViewModel = viewMo
                         checkedThumbColor = BuzzColors.Ground,
                     ),
                 )
+            }
+            val alerts = BuzzEdition.alertsEnabled.value
+            SettingsRow(
+                title = "Buzz-in alerts",
+                detail = "Show who buzzed in over the game, for a couple of seconds",
+                navId = "buzz.settings.alerts",
+                onClick = { BuzzEdition.setAlertsEnabled(!alerts) },
+            ) {
+                Switch(
+                    checked = alerts,
+                    onCheckedChange = { BuzzEdition.setAlertsEnabled(it) },
+                    colors = SwitchDefaults.colors(
+                        checkedTrackColor = BuzzColors.Yellow,
+                        checkedThumbColor = BuzzColors.Ground,
+                    ),
+                )
+            }
+            if (phones) {
+                SettingsRow(
+                    title = "Phone address",
+                    detail = "For phones that can't scan the code: type this into the browser",
+                    navId = "buzz.settings.address",
+                    onClick = {},
+                ) {
+                    Text(com.armsx2.BuzzMdns.ADDRESS, color = BuzzColors.Yellow, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
             }
             SettingsRow(
                 title = "Games folder",

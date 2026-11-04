@@ -87,6 +87,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             val port = slot / PER_SET
             if (UsbDevices.storedType(port) != DEVICE_TYPE) return
             BuzzInput.set(port, (slot % PER_SET) * 5 + button, down)
+            if (down && button == RED) com.armsx2.ui.buzz.BuzzAlerts.onBuzz(slot)
         }
 
         private const val PREF_PLAYERS = "buzz.players"
@@ -191,6 +192,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
     private val collapse = Array(PLAYERS) { p -> Runnable { setRevealed(p, false) } }
 
     private val phonesChanged: () -> Unit = { onPhonesChanged() }
+    private val lightsChanged: (Int) -> Unit = { invalidate() }
 
     /** No game running: the lobby shows instead of buzzers. */
     private var lobby = isLobbyNow()
@@ -274,6 +276,8 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         super.onAttachedToWindow()
         if (BuzzEdition.phonesEnabled.value) BuzzPhones.start()
         BuzzPhones.addListener(phonesChanged)
+        BuzzLights.start()
+        BuzzLights.addListener(lightsChanged)
         if (lobby) refreshQr()
         handler.post(poll)
         // A rebuilt panel starts with force off; make sure the phones agree.
@@ -285,6 +289,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         // Never leave a buzzer stuck down in the game when the panel goes away. The phone server
         // keeps running: a panel rebuild should not kick everyone off their phones.
         BuzzPhones.removeListener(phonesChanged)
+        BuzzLights.removeListener(lightsChanged)
         handler.removeCallbacks(poll)
         releaseAll()
         for (p in 0 until PLAYERS) {
@@ -432,7 +437,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         if (t < 1f) {
             val r = buzzerRadius(slot) * (1f - 0.35f * t)
             val alpha = ((1f - t) * 255).toInt()
-            drawBuzzer(canvas, q.centerX(), buzzerCentreY(slot), r, isHeld(bindId(slot, RED)), alpha)
+            drawBuzzer(canvas, q.centerX(), buzzerCentreY(slot), r, isHeld(bindId(slot, RED)), alpha, BuzzLights.isLit(slot))
         }
 
         // Coloured layout, sliding up into place.
@@ -441,7 +446,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             val slide = (1f - t) * 24 * dp
             val red = colourRects[slot][RED]
             drawBuzzer(canvas, red.centerX(), red.centerY() + slide, red.width() / 2f,
-                isHeld(bindId(slot, RED)), alpha)
+                isHeld(bindId(slot, RED)), alpha, BuzzLights.isLit(slot))
             for (b in COLOUR_ORDER) {
                 tmp.set(colourRects[slot][b])
                 tmp.offset(0f, slide)
@@ -453,13 +458,30 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         }
     }
 
-    private fun drawBuzzer(canvas: Canvas, cx: Float, cy: Float, r: Float, pressed: Boolean, alpha: Int) {
+    private fun drawBuzzer(
+        canvas: Canvas, cx: Float, cy: Float, r: Float, pressed: Boolean, alpha: Int, lit: Boolean = false,
+    ) {
+        // Lit by the game, as a real buzzer's dome lights up: a glow around the housing and a
+        // brighter dome.
+        if (lit) {
+            fill.color = withAlpha(0x55FF3B2F, alpha)
+            canvas.drawCircle(cx, cy, r * 1.12f, fill)
+        }
         // Grey housing ring, then the red dome. Pressed = dome sinks a little and darkens.
-        fill.color = withAlpha(0xFF2A2F3A.toInt(), alpha)
+        fill.color = withAlpha(if (lit) 0xFF4A2A2A.toInt() else 0xFF2A2F3A.toInt(), alpha)
         canvas.drawCircle(cx, cy, r, fill)
         val dome = if (pressed) r * 0.78f else r * 0.84f
-        fill.color = withAlpha(if (pressed) darken(FACE[RED]) else FACE[RED], alpha)
+        val domeColour = when {
+            pressed -> darken(FACE[RED])
+            lit -> 0xFFFF5A47.toInt()
+            else -> FACE[RED]
+        }
+        fill.color = withAlpha(domeColour, alpha)
         canvas.drawCircle(cx, cy, dome, fill)
+        if (lit) {
+            fill.color = withAlpha(0x66FFE1DC, alpha)
+            canvas.drawCircle(cx, cy, dome * 0.55f, fill)
+        }
         if (!pressed) {
             // Highlight so it reads as a dome rather than a flat disc.
             fill.color = withAlpha(0x33FFFFFF, alpha)
@@ -514,9 +536,12 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             }
         }
         val joinRight = if (phones) q.left - 10 * dp else w - 18 * dp
-        canvas.drawText(if (phones) "Join on a phone" else "Phone buzzers off", joinRight, q.centerY() - 2 * dp, header(14f, Paint.Align.RIGHT))
+        val room = joinRight - plusRect.right - 12 * dp
+        canvas.drawText(if (phones) "Any player can use a phone" else "Phone buzzers off", joinRight, q.centerY() - 2 * dp,
+            fit(header(14f, Paint.Align.RIGHT), if (phones) "Any player can use a phone" else "Phone buzzers off", room))
         val small = Paint(dim).apply { textAlign = Paint.Align.RIGHT; textSize = 12 * dp }
-        canvas.drawText(if (phones) "Tap the code to enlarge" else "Turn on in Settings", joinRight, q.centerY() + 14 * dp, small)
+        val sub = if (phones) "Scan, or go to ${BuzzMdns.ADDRESS}" else "Turn on in Settings"
+        canvas.drawText(sub, joinRight, q.centerY() + 14 * dp, fit(small, sub, room))
 
         // Seats.
         val phoneSeats = BuzzPhones.phoneSeats().associateBy { it.slot }
@@ -553,6 +578,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             }
             val where = when {
                 seat != null -> seat.where
+                onThor && phones -> "Thor screen or phone"
                 onThor -> "Thor screen"
                 phones -> "Scan the code to take this seat"
                 else -> "Needs phone buzzers"
@@ -569,8 +595,17 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
             canvas.drawText(ellipsize(where, wherePaint, maxW), textX, r.centerY() + 14 * dp, wherePaint)
         }
         val footY = seatRects[0].top + 4 * (seatRects[0].height() + 8 * dp) + 14 * dp
-        canvas.drawText("Players 1 to 4 can share the Thor's screen. Everyone else needs a phone.", w / 2f, minOf(footY, h - 12 * dp), dim)
+        val foot = if (phones) "Every seat can be played on a phone. Up to 4 can share the Thor's screen instead."
+            else "Up to 4 players share the Thor's screen. Turn on phone buzzers for more."
+        canvas.drawText(foot, w / 2f, minOf(footY, h - 12 * dp), fit(Paint(dim), foot, w - 36 * dp))
         if (showQr) drawQr(canvas)
+    }
+
+    /** [paint], shrunk (down to 75%) until [text] fits [maxWidth]. */
+    private fun fit(paint: Paint, text: String, maxWidth: Float): Paint {
+        val base = paint.textSize
+        while (paint.measureText(text) > maxWidth && paint.textSize > base * 0.75f) paint.textSize -= 0.5f * dp
+        return paint
     }
 
     private fun ellipsize(text: String, paint: Paint, maxWidth: Float): String {
@@ -683,7 +718,7 @@ class BuzzPad(context: Context, private val usbPort: Int) : View(context) {
         }
         val y = top + size + 34 * dp
         canvas.drawText("Scan to join as a buzzer", g.centerX(), y, body)
-        canvas.drawText("$url  ·  same Wi-Fi as the Thor  ·  tap to close", g.centerX(), y + 20 * dp, dim)
+        canvas.drawText("or go to ${BuzzMdns.ADDRESS}  ·  same Wi-Fi as the Thor  ·  tap to close", g.centerX(), y + 20 * dp, dim)
     }
 
     private fun withAlpha(color: Int, alpha: Int): Int {

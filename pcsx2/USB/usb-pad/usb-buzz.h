@@ -9,6 +9,9 @@
 
 namespace usb_pad
 {
+	/** Which buzzers' red lights the game has on for USB [port] (bit n = buzzer n+1). */
+	u8 BuzzLights(u32 port);
+
 	enum BuzzControlID
 	{
 		CID_BUZZ_PLAYER1_RED,

@@ -267,6 +267,9 @@ public class NativeApp {
 	/** Press/release one GUNCON_* binding on a port. */
 	public static native void usbLightgunButton(int port, int bind, boolean pressed);
 
+	/** Buzz Launcher: the game's buzzer lights on USB [port], bit n = buzzer n+1. */
+	public static native int buzzLights(int port);
+
 	/** Cabinet controls, from the core's JVS_MODE (pcsx2/DEV9/ACJV.h). */
 	public static final int ARCADE_MODE_GENERIC = 0;
 	public static final int ARCADE_MODE_LIGHTGUN = 1;

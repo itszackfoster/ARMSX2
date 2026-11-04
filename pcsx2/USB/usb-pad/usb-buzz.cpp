@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-3.0+
 
 #include "Host.h"
+
+#include <atomic>
 #include "IconsPromptFont.h"
 #include "Input/InputManager.h"
 #include "StateWrapper.h"
@@ -122,13 +124,44 @@ namespace usb_pad
 
 	BuzzState::~BuzzState() = default;
 
+	// The red light in each buzzer, as the game last set it: bit n = buzzer n+1 lit, per USB port.
+	// The game sets them with a HID output report (SET_REPORT) of one byte per buzzer, 0xFF for on;
+	// a real set lights its LEDs from it. Read by the Android frontend (Buzz Launcher) to flash the
+	// on-screen and phone buzzers the same way.
+	static std::atomic<u8> s_buzz_lights[2] = {};
+
+	u8 BuzzLights(u32 port)
+	{
+		return port < 2 ? s_buzz_lights[port].load(std::memory_order_relaxed) : 0;
+	}
+
+	static void buzz_set_lights(u32 port, const uint8_t* data, int length)
+	{
+		// The report is [0x00, b1, b2, b3, b4, 0x00, 0x00]; some senders add a leading byte, so
+		// count back from the end rather than forward from the start.
+		if (port >= 2 || length < 5)
+			return;
+		const int start = length >= 7 ? length - 6 : 1;
+		u8 mask = 0;
+		for (int i = 0; i < 4 && start + i < length; i++)
+		{
+			if (data[start + i] != 0)
+				mask |= static_cast<u8>(1u << i);
+		}
+		s_buzz_lights[port].store(mask, std::memory_order_relaxed);
+	}
+
 	static void buzz_handle_control(USBDevice* dev, USBPacket* p,
 		int request, int value, int index, int length, uint8_t* data)
 	{
 		int ret = 0;
+		BuzzState* s = USB_CONTAINER_OF(dev, BuzzState, dev);
 
 		switch (request)
 		{
+			case SET_REPORT:
+				buzz_set_lights(s->port, data, length);
+				break;
 			case InterfaceRequest | USB_REQ_GET_DESCRIPTOR:
 				switch (value >> 8)
 				{
@@ -182,6 +215,9 @@ namespace usb_pad
 				}
 				break;
 			case USB_TOKEN_OUT:
+				// Lights sent on the interrupt pipe instead of as a control request.
+				if (p->buffer_ptr && p->buffer_size > 0)
+					buzz_set_lights(s->port, static_cast<const uint8_t*>(p->buffer_ptr), static_cast<int>(p->buffer_size));
 				break;
 			default:
 			fail:
@@ -193,6 +229,8 @@ namespace usb_pad
 	static void buzz_unrealize(USBDevice* dev)
 	{
 		BuzzState* s = USB_CONTAINER_OF(dev, BuzzState, dev);
+		if (s->port < 2)
+			s_buzz_lights[s->port].store(0, std::memory_order_relaxed);
 		delete s;
 	}
 

@@ -128,6 +128,11 @@ object WindowImpl {
                     com.armsx2.ui.touch.TouchControlsOverlay()
                 }
 
+                // Buzz Launcher: "[name] has buzzed in", over the game and under every menu.
+                if (com.armsx2.BuzzEdition.ENABLED && gameOnScreen && !showLibrary.value && !overlayVisible.value) {
+                    com.armsx2.ui.buzz.BuzzAlertOverlay()
+                }
+
             if (showLibrary.value && MainActivityRuntime.eState.value == EmuState.RUNNING && !overlayVisible.value) {
                 Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.56f))) {
                     com.armsx2.navigation.AppNavigation()

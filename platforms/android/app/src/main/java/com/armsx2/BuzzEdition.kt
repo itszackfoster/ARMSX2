@@ -20,6 +20,15 @@ object BuzzEdition {
     /** Phones may join as buzzers. On unless turned off in Settings. */
     val phonesEnabled = mutableStateOf(true)
 
+    /** "[name] has buzzed in" over the game. On unless turned off in Settings. */
+    private const val PREF_ALERTS = "buzz.alerts"
+    val alertsEnabled = mutableStateOf(true)
+
+    fun setAlertsEnabled(on: Boolean) {
+        alertsEnabled.value = on
+        runCatching { MainActivityRuntime.prefs.edit().putBoolean(PREF_ALERTS, on).apply() }
+    }
+
     /** How many players are in the game, for screens that show it (BuzzPad.playerCount is the
      *  stored value; this mirrors it as Compose state). */
     val players = androidx.compose.runtime.mutableIntStateOf(4)
@@ -32,6 +41,7 @@ object BuzzEdition {
         if (!ENABLED) return
         val prefs = runCatching { MainActivityRuntime.prefs }.getOrNull() ?: return
         phonesEnabled.value = prefs.getBoolean(PREF_PHONES, true)
+        alertsEnabled.value = prefs.getBoolean(PREF_ALERTS, true)
         players.intValue = BuzzPad.playerCount()
         if (prefs.getString("usb.port0.type", null) != BuzzPad.DEVICE_TYPE) {
             prefs.edit()

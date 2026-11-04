@@ -204,6 +204,12 @@ object BuzzPhones {
         }.getOrNull() ?: return
         server = ss
         thread(name = "BuzzPhones-ticker", isDaemon = true) { tick(ss) }
+        // buzz.local, for phones that would rather type an address than scan.
+        runCatching { BuzzMdns.start(MainActivityRuntime.instance?.applicationContext) }
+        main.post {
+            BuzzLights.start()
+            BuzzLights.addListener(lightsChanged)
+        }
         thread(name = "BuzzPhones-accept", isDaemon = true) {
             while (!ss.isClosed) {
                 val sock = runCatching { ss.accept() }.getOrNull() ?: break
@@ -216,6 +222,7 @@ object BuzzPhones {
         val ss = server ?: return
         server = null
         runCatching { ss.close() }
+        BuzzMdns.stop()
         val all = synchronized(lock) {
             seats.fill(null)
             clients.toList()
@@ -257,6 +264,17 @@ object BuzzPhones {
         true
     }
 
+    /** The game's buzzer lights, sent to each phone as its own buzzer goes on or off. */
+    private val lightsChanged: (Int) -> Unit = { mask -> sendLights(mask) }
+
+    private fun sendLights(mask: Int) {
+        val seated = synchronized(lock) { clients.filter { it.joined && it.slot >= 0 } }
+        seated.forEach { c ->
+            val on = (mask shr c.slot) and 1 == 1
+            thread(isDaemon = true) { send(c, """{"t":"light","on":$on}""") }
+        }
+    }
+
     /** Thor's force-colours toggle, mirrored on every phone. */
     fun setForce(on: Boolean) {
         force = on
@@ -266,9 +284,10 @@ object BuzzPhones {
     // ---- Address --------------------------------------------------------------------------------
 
     /** The address phones should open, or null with no Wi-Fi or hotspot. */
-    fun url(): String? = localAddress()?.let { "http://$it:$PORT" }
+    fun url(): String? = localIp()?.let { "http://$it:$PORT" }
 
-    private fun localAddress(): String? {
+    /** The Thor's address on Wi-Fi or its hotspot, or null with neither. */
+    fun localIp(): String? {
         val found = mutableListOf<Pair<String, String>>() // interface name, address
         runCatching {
             for (iface in NetworkInterface.getNetworkInterfaces()?.toList().orEmpty()) {
@@ -444,6 +463,7 @@ object BuzzPhones {
             .put("colour", BuzzPad.seatColourHex(slot))
         send(c, reply.toString())
         send(c, """{"t":"force","on":$force}""")
+        send(c, """{"t":"light","on":${BuzzLights.isLit(slot)}}""")
         c.lastPong = System.currentTimeMillis()
         notifyChanged()
     }
